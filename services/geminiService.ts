@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI, SchemaType as Type } from "@google/generative-ai";
 import { PDFDocument } from 'pdf-lib';
 import { PlanData, GradeLevel, TeachingPlanItem, EvaluationPlanRow, RubricElement, PerformanceTask } from "../types";
 
@@ -166,7 +166,7 @@ export const generateTeacherGoals = async (
   const apiKey = requireApiKey();
   if (!apiKey) return { teacherGoal: '', actionPlan: '' };
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   const prompt = `
     You are an expert Korean school teacher.
@@ -192,10 +192,8 @@ export const generateTeacherGoals = async (
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{ text: prompt }],
-      config: {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -205,9 +203,9 @@ export const generateTeacherGoals = async (
           }
         }
       }
-    });
+    }).generateContent([{ text: prompt }]);
 
-    const text = response.text;
+    const text = response.response.text();
     if (text) {
       return JSON.parse(text);
     }
@@ -226,7 +224,7 @@ export const generateSamplePlan = async (
   const apiKey = requireApiKey();
   if (!apiKey) return {};
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   let userPrompt = `
     You are an expert Korean school teacher. 
@@ -272,10 +270,8 @@ export const generateSamplePlan = async (
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{ text: userPrompt }],
-      config: {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -320,9 +316,9 @@ export const generateSamplePlan = async (
           }
         }
       }
-    });
+    }).generateContent([{ text: userPrompt }]);
 
-    const text = response.text;
+    const text = response.response.text();
     if (text) {
       const parsed = JSON.parse(text);
 
@@ -353,7 +349,7 @@ export const generateSamplePlan = async (
 
 // --- Single Chunk Analyzer ---
 const analyzeChunk = async (
-  ai: GoogleGenAI,
+  ai: GoogleGenerativeAI,
   chunkContent: any[],
   subject: string,
   grade: GradeLevel,
@@ -399,10 +395,8 @@ const analyzeChunk = async (
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [...chunkContent, { text: prompt }],
-      config: {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -418,8 +412,8 @@ const analyzeChunk = async (
           }
         }
       }
-    });
-    const text = response.text;
+    }).generateContent([...chunkContent, { text: prompt }]);
+    const text = response.response.text();
     return text ? JSON.parse(text) : [];
   } catch (e: any) {
     console.warn(`Chunk ${chunkIndex} failed`, e);
@@ -439,7 +433,7 @@ export const parseStandardsAndGeneratePlan = async (
   const apiKey = requireApiKey();
   if (!apiKey) throw new Error("API Key missing");
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
   const mimeType = getMimeType(file);
 
   let allItems: any[] = [];
@@ -587,7 +581,7 @@ export const generateNotesFromMaterial = async (
   const apiKey = requireApiKey();
   if (!apiKey) return '';
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
   const mimeType = getMimeType(file);
 
   let contentPart: any;
@@ -621,11 +615,8 @@ export const generateNotesFromMaterial = async (
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [contentPart, { text: prompt }]
-    });
-    return response.text || '';
+    const response = await ai.getGenerativeModel({ model: 'gemini-1.5-flash' }).generateContent([contentPart, { text: prompt }]);
+    return response.response.text() || '';
   } catch (error) {
     console.error("Generate Notes Error", error);
     return '';
@@ -635,7 +626,7 @@ export const generateNotesFromMaterial = async (
 export const extractGradeGoalsFromFile = async (file: File): Promise<{ gradeGoal: string; humanIdeal: string }> => {
   const apiKey = requireApiKey();
   if (!apiKey) return { gradeGoal: '', humanIdeal: '' };
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   const mimeType = getMimeType(file);
   let contentPart: any = {};
@@ -657,21 +648,8 @@ export const extractGradeGoalsFromFile = async (file: File): Promise<{ gradeGoal
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [contentPart, { text: prompt }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            gradeGoal: { type: Type.STRING },
-            humanIdeal: { type: Type.STRING }
-          }
-        }
-      }
-    });
-    const text = response.text;
+    const response = await ai.getGenerativeModel({ model: 'gemini-1.5-flash' }).generateContent([contentPart, { text: prompt }]);
+    const text = response.response.text();
     return text ? JSON.parse(text) : { gradeGoal: '', humanIdeal: '' };
   } catch (e) {
     console.error(e);
@@ -682,7 +660,7 @@ export const extractGradeGoalsFromFile = async (file: File): Promise<{ gradeGoal
 export const extractEvaluationPlanFromFile = async (file: File): Promise<EvaluationPlanRow[]> => {
   const apiKey = requireApiKey();
   if (!apiKey) return [];
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   const mimeType = getMimeType(file);
   let contentPart: any = {};
@@ -706,10 +684,8 @@ export const extractEvaluationPlanFromFile = async (file: File): Promise<Evaluat
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [contentPart, { text: prompt }],
-      config: {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -729,8 +705,8 @@ export const extractEvaluationPlanFromFile = async (file: File): Promise<Evaluat
           }
         }
       }
-    });
-    const text = response.text;
+    }).generateContent([{ text: prompt }]);
+    const text = response.response.text();
     if (!text) return [];
     const rows = JSON.parse(text);
     return rows.map((r: any, i: number) => ({ ...r, id: `imported-${Date.now()}-${i}` }));
@@ -748,7 +724,7 @@ export const generateCriteriaFromRubric = async (
 ): Promise<{ A: string; B: string; C: string; D: string; E: string }> => {
   const apiKey = requireApiKey();
   if (!apiKey) return { A: '', B: '', C: '', D: '', E: '' };
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   const prompt = `
     Task: ${taskName}
@@ -762,10 +738,8 @@ export const generateCriteriaFromRubric = async (
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{ text: prompt }],
-      config: {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -778,8 +752,8 @@ export const generateCriteriaFromRubric = async (
           }
         }
       }
-    });
-    const text = response.text;
+    }).generateContent([{ text: prompt }]);
+    const text = response.response.text();
     return text ? JSON.parse(text) : { A: '', B: '', C: '', D: '', E: '' };
   } catch (e) {
     console.error(e);
@@ -790,7 +764,7 @@ export const generateCriteriaFromRubric = async (
 export const extractRubricsFromFile = async (file: File): Promise<any[]> => {
   const apiKey = requireApiKey();
   if (!apiKey) return [];
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   const mimeType = getMimeType(file);
   let contentPart: any = {};
@@ -812,12 +786,10 @@ export const extractRubricsFromFile = async (file: File): Promise<any[]> => {
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [contentPart, { text: prompt }],
-      config: { responseMimeType: "application/json" } // Schema is complex, letting model infer or using 'any'
-    });
-    const text = response.text;
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: { responseMimeType: "application/json" } // Schema is complex, letting model infer or using 'any'
+    }).generateContent([{ text: prompt }]);
+    const text = response.response.text();
     return text ? JSON.parse(text) : [];
   } catch (e) {
     console.error(e);
@@ -828,7 +800,7 @@ export const extractRubricsFromFile = async (file: File): Promise<any[]> => {
 export const generateRubricItems = async (elementName: string, considerations: string): Promise<{ criteria: string, score: string }[]> => {
   const apiKey = requireApiKey();
   if (!apiKey) return [];
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   const prompt = `
     Create a rubric checklist for evaluation element: "${elementName}".
@@ -837,10 +809,8 @@ export const generateRubricItems = async (elementName: string, considerations: s
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{ text: prompt }],
-      config: {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -853,8 +823,8 @@ export const generateRubricItems = async (elementName: string, considerations: s
           }
         }
       }
-    });
-    const text = response.text;
+    }).generateContent([{ text: prompt }]);
+    const text = response.response.text();
     return text ? JSON.parse(text) : [];
   } catch (e) {
     console.error(e);
@@ -865,7 +835,7 @@ export const generateRubricItems = async (elementName: string, considerations: s
 export const suggestCoreIdeas = async (subject: string, standards: string[], taskName: string): Promise<string[]> => {
   const apiKey = requireApiKey();
   if (!apiKey) return [];
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   const prompt = `
     Subject: ${subject}
@@ -877,18 +847,16 @@ export const suggestCoreIdeas = async (subject: string, standards: string[], tas
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{ text: prompt }],
-      config: {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
           items: { type: Type.STRING }
         }
       }
-    });
-    const text = response.text;
+    }).generateContent([{ text: prompt }]);
+    const text = response.response.text();
     return text ? JSON.parse(text) : [];
   } catch (e) {
     console.error(e);
@@ -900,7 +868,7 @@ export const suggestCoreIdeasFromFile = async (file: File, subject: string, stan
   // Similar to suggestCoreIdeas but with file context
   const apiKey = requireApiKey();
   if (!apiKey) return [];
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   const mimeType = getMimeType(file);
   let contentPart: any = {};
@@ -925,18 +893,16 @@ export const suggestCoreIdeasFromFile = async (file: File, subject: string, stan
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [contentPart, { text: prompt }],
-      config: {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
           items: { type: Type.STRING }
         }
       }
-    });
-    const text = response.text;
+    }).generateContent([contentPart, { text: prompt }]);
+    const text = response.response.text();
     return text ? JSON.parse(text) : [];
   } catch (e) {
     console.error(e);
@@ -953,7 +919,7 @@ export const generateSemesterStandardsFromDomainFile = async (
 ): Promise<{ A: string; B: string; C: string; D?: string; E?: string }> => {
   const apiKey = requireApiKey();
   if (!apiKey) return { A: '', B: '', C: '' };
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenerativeAI(apiKey.toString());
 
   // Handle PDF paging if necessary, similar to extractStandards
   let contentParts: any[] = [];
@@ -1011,10 +977,8 @@ export const generateSemesterStandardsFromDomainFile = async (
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [...contentParts, { text: prompt }],
-      config: {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-1.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -1027,8 +991,8 @@ export const generateSemesterStandardsFromDomainFile = async (
           }
         }
       }
-    });
-    const text = response.text;
+    }).generateContent([...contentParts, { text: prompt }]);
+    const text = response.response.text();
     return text ? JSON.parse(text) : { A: '', B: '', C: '' };
   } catch (e) {
     console.error(e);
