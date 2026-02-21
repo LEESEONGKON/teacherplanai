@@ -190,7 +190,7 @@ export const generateTeacherGoals = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [{ text: prompt }],
       config: {
         responseMimeType: "application/json",
@@ -270,7 +270,7 @@ export const generateSamplePlan = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [{ text: userPrompt }],
       config: {
         responseMimeType: "application/json",
@@ -397,7 +397,7 @@ const analyzeChunk = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [...chunkContent, { text: prompt }],
       config: {
         responseMimeType: "application/json",
@@ -617,7 +617,7 @@ export const generateNotesFromMaterial = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [contentPart, { text: prompt }]
     });
     return response.text || '';
@@ -653,7 +653,7 @@ export const extractGradeGoalsFromFile = async (file: File): Promise<{ gradeGoal
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [contentPart, { text: prompt }],
       config: {
         responseMimeType: "application/json",
@@ -702,7 +702,7 @@ export const extractEvaluationPlanFromFile = async (file: File): Promise<Evaluat
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [contentPart, { text: prompt }],
       config: {
         responseMimeType: "application/json",
@@ -758,7 +758,7 @@ export const generateCriteriaFromRubric = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [{ text: prompt }],
       config: {
         responseMimeType: "application/json",
@@ -808,7 +808,7 @@ export const extractRubricsFromFile = async (file: File): Promise<any[]> => {
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [contentPart, { text: prompt }],
       config: { responseMimeType: "application/json" } // Schema is complex, letting model infer or using 'any'
     });
@@ -833,7 +833,7 @@ export const generateRubricItems = async (elementName: string, considerations: s
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [{ text: prompt }],
       config: {
         responseMimeType: "application/json",
@@ -873,7 +873,7 @@ export const suggestCoreIdeas = async (subject: string, standards: string[], tas
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [{ text: prompt }],
       config: {
         responseMimeType: "application/json",
@@ -921,7 +921,7 @@ export const suggestCoreIdeasFromFile = async (file: File, subject: string, stan
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [contentPart, { text: prompt }],
       config: {
         responseMimeType: "application/json",
@@ -1006,7 +1006,7 @@ export const generateSemesterStandardsFromDomainFile = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-2.0-flash',
       contents: [...contentParts, { text: prompt }],
       config: {
         responseMimeType: "application/json",
