@@ -365,16 +365,19 @@ const analyzeChunk = async (
     **CRITICAL TASK**: 
     1. **SUBJECT FILTER**: The uploaded file may contain standards for MULTIPLE different subjects. You must **ONLY** extract standards for "**${subject}**".
     2. **STRICT FILTERING & FORMATTING**:
-       - **Target**: Extract "Achievement Standards" (성취기준).
+       - **Target**: Extract ONLY formal "Achievement Standards" (성취기준).
        - **Code Association**: Look for standard codes (e.g., [9수01-01], [12국어02-01]). If the code is in a separate column or line from the text, **PREPEND** the code to the standard text. 
          - Example: "[9수01-01] 지수법칙을 이해한다."
-       - **Exclusion**:
+       - **CRITICAL EXCLUSIONS - DO NOT EXTRACT THESE**:
          - **IGNORE** Unit names (e.g. "I. 수와 연산", "문자와 식").
          - **IGNORE** Learning Objectives (often starting with bullet points or "학습목표").
          - **IGNORE** Table headers.
+         - **IGNORE** Evaluation Criteria or Rubric Descriptions (평가기준, e.g., "도형의 성질을 이해하고... 판별하는 능력을 평가한다", "상/중/하" descriptions).
+         - **IGNORE** General descriptive text outlining the curriculum.
        - **Validation**: 
          - A valid standard MUST end with a verb phrase like "~한다", "~할 수 있다", "~이해한다".
          - If a line is just a noun phrase (e.g. "일차방정식의 풀이"), **IGNORE IT**.
+         - **If a sentence talks about "evaluating an ability" (능력을 평가한다), IT IS NOT A STANDARD. IGNORE IT.**
     
     ${range ? `- **SCOPE**: Only extract standards that match this description: "${range}"` : ''}
     
@@ -528,15 +531,17 @@ export const parseStandardsAndGeneratePlan = async (
     const endsWithDa = /[다\.?]$/.test(bodyText);
     const endsWithNoun = /[임음함]$/.test(bodyText); // Also accept noun endings if valid
 
-    // Removed the strict requirement to ONLY have codes or specific endings.
-    // Since OCR/PDF extraction of curriculum tables is messy, 
-    // we trust the AI structural extraction more here for valid row entries.
+    // c. Filter generic evaluation or non-standard text
+    if (bodyText.includes('능력을 평가한다') || bodyText.includes('성취수준') || bodyText.includes('평가기준')) continue;
+
+    const isLongParagraph = bodyText.length > 100;
     if (!hasCode && !endsWithDa && !endsWithNoun) {
-      // Still strictly filter out very short obvious header/noise words 
       if (cleanBody.length < 5) continue;
+      // Also drop long conversational paragraphs if they don't have codes, as they are likely curriculum intros
+      if (isLongParagraph) continue;
     }
 
-    // c. Filter if Standard is same as Unit
+    // d. Filter if Standard is same as Unit
     if (item.unit && item.unit.replace(/\s+/g, '') === cleanBody) continue;
 
     // 5. Smart Deduplication
