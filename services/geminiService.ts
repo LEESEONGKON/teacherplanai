@@ -393,6 +393,12 @@ const analyzeChunk = async (
        [평가] ...
     
     **OUTPUT RULE**: 
+    - **JSON Mapping Requirement:**
+      - \`unit\`: The Unit Name (단원명), must preserve Roman numerals.
+      - \`standard\`: **CRITICAL**: This field MUST contain the actual Achievement Standard, including its code if it has one (e.g. "[9수01-01] 지수법칙을 이해한다."). Do NOT put the standard in the 'element' field.
+      - \`element\`: The Evaluation Element (평가요소, e.g., "지수법칙의 이해와 적용"). Do NOT put the full standard here.
+      - \`teachingMethod\`: Suggested teaching methods.
+      - \`notes\`: Notes separated into [도입], [수업], [평가].
     - **Encoding Correction**: If the document contains the middle dot character '･' or '・', strictly treat it as '·' (Middle Dot).
     - Return JSON Array.
     `;
