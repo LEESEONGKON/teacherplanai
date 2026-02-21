@@ -9,7 +9,10 @@ const getApiKey = (): string => {
   if (storedKey) return storedKey;
 
   // 2. Fallback to env (Developer/Deployment key)
-  return process.env.API_KEY || '';
+  const envKey = process.env.API_KEY;
+  if (envKey && envKey !== 'PLACEHOLDER_API_KEY') return envKey;
+
+  return '';
 };
 
 // Helper to check if key exists and alert if not
@@ -418,8 +421,10 @@ const analyzeChunk = async (
     });
     const text = response.text;
     return text ? JSON.parse(text) : [];
-  } catch (e) {
+  } catch (e: any) {
     console.warn(`Chunk ${chunkIndex} failed`, e);
+    // TEMPORARY: Alert the exact error to test what is crashing on GH pages
+    alert(`AI 텍스트 추출 중 오류가 발생했습니다 (설정의 API 키를 다시 저장해주세요): ${e.message || String(e)}`);
     return [];
   }
 }
