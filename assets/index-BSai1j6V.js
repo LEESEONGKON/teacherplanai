@@ -359,7 +359,7 @@ end`},ik=function(){for(var t=[],e=0;e<arguments.length;e++)t[e]=arguments[e];re
     Please perform the following steps for the subject "${r}":
     1. Scan the text to find the table or list of Achievement Standards.
     2. EXTRACT the Standard Code and Description.
-    3. ANALYZE each standard to determine the Unit Name (단원명).
+    3. ANALYZE each standard to determine the Unit Name (단원명). **CRITICAL: You MUST preserve any Roman numeral prefixes (e.g., "I. 수와 연산", "II. 방정식") exactly as they appear in the Unit Name.**
     4. GENERATE an 'Evaluation Element' (평가 요소).
     5. SUGGEST 'Teaching Methods' (수업 방법).
     6. GENERATE 'Notes' (수업-평가 연계 주안점) strictly in this format:
