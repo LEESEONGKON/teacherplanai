@@ -193,7 +193,7 @@ export const generateTeacherGoals = async (
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: {
+      model: 'gemini-2.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -271,7 +271,7 @@ export const generateSamplePlan = async (
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: {
+      model: 'gemini-2.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -396,7 +396,7 @@ const analyzeChunk = async (
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: {
+      model: 'gemini-2.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -615,7 +615,7 @@ export const generateNotesFromMaterial = async (
   `;
 
   try {
-    const response = await ai.getGenerativeModel({ model: 'gemini-1.5-flash' }).generateContent([contentPart, { text: prompt }]);
+    const response = await ai.getGenerativeModel({ model: 'gemini-2.5-flash' }).generateContent([contentPart, { text: prompt }]);
     return response.response.text() || '';
   } catch (error) {
     console.error("Generate Notes Error", error);
@@ -648,7 +648,7 @@ export const extractGradeGoalsFromFile = async (file: File): Promise<{ gradeGoal
     `;
 
   try {
-    const response = await ai.getGenerativeModel({ model: 'gemini-1.5-flash' }).generateContent([contentPart, { text: prompt }]);
+    const response = await ai.getGenerativeModel({ model: 'gemini-2.5-flash' }).generateContent([contentPart, { text: prompt }]);
     const text = response.response.text();
     return text ? JSON.parse(text) : { gradeGoal: '', humanIdeal: '' };
   } catch (e) {
@@ -685,7 +685,7 @@ export const extractEvaluationPlanFromFile = async (file: File): Promise<Evaluat
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: {
+      model: 'gemini-2.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -739,7 +739,7 @@ export const generateCriteriaFromRubric = async (
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: {
+      model: 'gemini-2.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -787,7 +787,7 @@ export const extractRubricsFromFile = async (file: File): Promise<any[]> => {
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: { responseMimeType: "application/json" } // Schema is complex, letting model infer or using 'any'
+      model: 'gemini-2.5-flash', generationConfig: { responseMimeType: "application/json" } // Schema is complex, letting model infer or using 'any'
     }).generateContent([{ text: prompt }]);
     const text = response.response.text();
     return text ? JSON.parse(text) : [];
@@ -810,7 +810,7 @@ export const generateRubricItems = async (elementName: string, considerations: s
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: {
+      model: 'gemini-2.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -848,7 +848,7 @@ export const suggestCoreIdeas = async (subject: string, standards: string[], tas
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: {
+      model: 'gemini-2.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -894,7 +894,7 @@ export const suggestCoreIdeasFromFile = async (file: File, subject: string, stan
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: {
+      model: 'gemini-2.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -978,7 +978,7 @@ export const generateSemesterStandardsFromDomainFile = async (
 
   try {
     const response = await ai.getGenerativeModel({
-      model: 'gemini-1.5-flash', generationConfig: {
+      model: 'gemini-2.5-flash', generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
