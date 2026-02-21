@@ -7,7 +7,7 @@ const getApiKey = (): string => {
   // 1. Check Local Storage (User entered key)
   const storedKey = localStorage.getItem('TEACHER_PLAN_API_KEY');
   if (storedKey) return storedKey;
-  
+
   // 2. Fallback to env (Developer/Deployment key)
   return process.env.API_KEY || '';
 };
@@ -77,7 +77,7 @@ const sanitizeText = (text: string): string => {
   // Fix specifically reported issue: '･' showing as '아ᅢ' or other corruptions
   // Also normalize middle dots
   return text
-    .replace(/아ᅢ/g, '·') 
+    .replace(/아ᅢ/g, '·')
     .replace(/･/g, '·')
     .replace(/\uFF65/g, '·'); // Halfwidth Katakana Middle Dot
 };
@@ -88,7 +88,7 @@ const sanitizeText = (text: string): string => {
 const parsePageRange = (rangeStr: string, totalPages: number): number[] => {
   const pages = new Set<number>();
   const parts = rangeStr.split(/,|\s+/); // Split by comma or space
-  
+
   for (const part of parts) {
     const trimmed = part.trim();
     if (!trimmed) continue;
@@ -97,7 +97,7 @@ const parsePageRange = (rangeStr: string, totalPages: number): number[] => {
       const [startStr, endStr] = trimmed.split('-');
       const start = parseInt(startStr, 10);
       const end = parseInt(endStr, 10);
-      
+
       if (!isNaN(start) && !isNaN(end)) {
         // Ensure range is valid and within bounds
         const s = Math.max(1, Math.min(start, end));
@@ -119,38 +119,38 @@ const parsePageRange = (rangeStr: string, totalPages: number): number[] => {
 // Extract specific pages from a PDF file and return as Base64 string
 // Accepts indices (0-based) array now to support chunking logic easier
 const extractPdfPagesByIndices = async (file: File, pageIndices: number[]): Promise<string | null> => {
-    try {
-        if (pageIndices.length === 0) return null;
-        const arrayBuffer = await file.arrayBuffer();
-        const pdfDoc = await PDFDocument.load(arrayBuffer);
-        
-        const newPdf = await PDFDocument.create();
-        const copiedPages = await newPdf.copyPages(pdfDoc, pageIndices);
-        
-        for (const page of copiedPages) {
-            newPdf.addPage(page);
-        }
+  try {
+    if (pageIndices.length === 0) return null;
+    const arrayBuffer = await file.arrayBuffer();
+    const pdfDoc = await PDFDocument.load(arrayBuffer);
 
-        const savedBase64 = await newPdf.saveAsBase64();
-        return savedBase64;
-    } catch (error) {
-        console.error("PDF Slicing Error:", error);
-        return null;
+    const newPdf = await PDFDocument.create();
+    const copiedPages = await newPdf.copyPages(pdfDoc, pageIndices);
+
+    for (const page of copiedPages) {
+      newPdf.addPage(page);
     }
+
+    const savedBase64 = await newPdf.saveAsBase64();
+    return savedBase64;
+  } catch (error) {
+    console.error("PDF Slicing Error:", error);
+    return null;
+  }
 };
 
 // Original Helper (Wrapper)
 const extractPdfPages = async (file: File, pageRange: string): Promise<string | null> => {
-     try {
-        const arrayBuffer = await file.arrayBuffer();
-        const pdfDoc = await PDFDocument.load(arrayBuffer);
-        const totalPages = pdfDoc.getPageCount();
-        const pagesToKeep = parsePageRange(pageRange, totalPages);
-        return extractPdfPagesByIndices(file, pagesToKeep);
-     } catch (e) {
-         console.error(e);
-         return null;
-     }
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdfDoc = await PDFDocument.load(arrayBuffer);
+    const totalPages = pdfDoc.getPageCount();
+    const pagesToKeep = parsePageRange(pageRange, totalPages);
+    return extractPdfPagesByIndices(file, pagesToKeep);
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
 }
 
 
@@ -216,15 +216,15 @@ export const generateTeacherGoals = async (
 };
 
 export const generateSamplePlan = async (
-  subject: string, 
-  grade: GradeLevel, 
+  subject: string,
+  grade: GradeLevel,
   currentData: PlanData
 ): Promise<Partial<PlanData>> => {
   const apiKey = requireApiKey();
   if (!apiKey) return {};
 
   const ai = new GoogleGenAI({ apiKey });
-  
+
   let userPrompt = `
     You are an expert Korean school teacher. 
     Create a JSON object to populate a "Teaching and Evaluation Plan" for the subject: ${subject}, Grade: ${grade}.
@@ -285,7 +285,7 @@ export const generateSamplePlan = async (
                   unit: { type: Type.STRING },
                   standard: { type: Type.STRING },
                   element: { type: Type.STRING },
-                  method: { 
+                  method: {
                     type: Type.ARRAY,
                     items: { type: Type.STRING }
                   },
@@ -322,7 +322,7 @@ export const generateSamplePlan = async (
     const text = response.text;
     if (text) {
       const parsed = JSON.parse(text);
-      
+
       // Post-process evaluationRows to add IDs
       const processedEvaluationRows = parsed.evaluationRows?.map((row: any, idx: number) => ({
         ...row,
@@ -350,14 +350,14 @@ export const generateSamplePlan = async (
 
 // --- Single Chunk Analyzer ---
 const analyzeChunk = async (
-    ai: GoogleGenAI, 
-    chunkContent: any[], 
-    subject: string, 
-    grade: GradeLevel,
-    range?: string,
-    chunkIndex?: number
+  ai: GoogleGenAI,
+  chunkContent: any[],
+  subject: string,
+  grade: GradeLevel,
+  range?: string,
+  chunkIndex?: number
 ): Promise<any[]> => {
-    const prompt = `
+  const prompt = `
     You are an expert Korean school teacher helper.
     I have uploaded a document containing Curriculum Standards (성취기준).
     
@@ -395,33 +395,33 @@ const analyzeChunk = async (
     - Return JSON Array.
     `;
 
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: [...chunkContent, { text: prompt }],
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            unit: { type: Type.STRING },
-                            standard: { type: Type.STRING },
-                            element: { type: Type.STRING },
-                            teachingMethod: { type: Type.STRING },
-                            notes: { type: Type.STRING }
-                        }
-                    }
-                }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [...chunkContent, { text: prompt }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              unit: { type: Type.STRING },
+              standard: { type: Type.STRING },
+              element: { type: Type.STRING },
+              teachingMethod: { type: Type.STRING },
+              notes: { type: Type.STRING }
             }
-        });
-        const text = response.text;
-        return text ? JSON.parse(text) : [];
-    } catch (e) {
-        console.warn(`Chunk ${chunkIndex} failed`, e);
-        return [];
-    }
+          }
+        }
+      }
+    });
+    const text = response.text;
+    return text ? JSON.parse(text) : [];
+  } catch (e) {
+    console.warn(`Chunk ${chunkIndex} failed`, e);
+    return [];
+  }
 }
 
 export const parseStandardsAndGeneratePlan = async (
@@ -438,64 +438,64 @@ export const parseStandardsAndGeneratePlan = async (
   const mimeType = getMimeType(file);
 
   let allItems: any[] = [];
-  
+
   // CHUNKING LOGIC FOR PDF
   // If PDF and pageRange is provided, chunk it into groups of 3 pages to avoid context loss
   if (mimeType === 'application/pdf' && pageRange && pageRange.trim()) {
-      try {
-          const arrayBuffer = await file.arrayBuffer();
-          const pdfDoc = await PDFDocument.load(arrayBuffer);
-          const totalPages = pdfDoc.getPageCount();
-          
-          // Get all requested page indices (0-based)
-          const requestedIndices = parsePageRange(pageRange, totalPages);
-          
-          if (requestedIndices.length === 0) {
-              console.warn("No valid pages found in range");
-              return [];
-          }
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(arrayBuffer);
+      const totalPages = pdfDoc.getPageCount();
 
-          // Split into chunks of 3 pages
-          const CHUNK_SIZE = 3;
-          const chunkedIndices: number[][] = [];
-          for (let i = 0; i < requestedIndices.length; i += CHUNK_SIZE) {
-              chunkedIndices.push(requestedIndices.slice(i, i + CHUNK_SIZE));
-          }
-          
-          console.log(`Split ${requestedIndices.length} pages into ${chunkedIndices.length} chunks.`);
+      // Get all requested page indices (0-based)
+      const requestedIndices = parsePageRange(pageRange, totalPages);
 
-          // Process chunks in parallel (limited concurrency could be added if needed, but 3-flash is fast)
-          const chunkPromises = chunkedIndices.map(async (indices, i) => {
-              const slicedBase64 = await extractPdfPagesByIndices(file, indices);
-              if (!slicedBase64) return [];
-              
-              const chunkContent = [{
-                  inlineData: { mimeType: 'application/pdf', data: slicedBase64 }
-              }];
-              return analyzeChunk(ai, chunkContent, subject, grade, range, i);
-          });
-
-          const results = await Promise.all(chunkPromises);
-          results.forEach(res => allItems.push(...res));
-
-      } catch (e) {
-          console.error("Chunking failed, falling back to full file", e);
-          // Fallback to single call
-          const base64Data = await fileToBase64(file);
-          const chunkContent = [{ inlineData: { mimeType, data: base64Data } }];
-          allItems = await analyzeChunk(ai, chunkContent, subject, grade, range);
+      if (requestedIndices.length === 0) {
+        console.warn("No valid pages found in range");
+        return [];
       }
+
+      // Split into chunks of 3 pages
+      const CHUNK_SIZE = 3;
+      const chunkedIndices: number[][] = [];
+      for (let i = 0; i < requestedIndices.length; i += CHUNK_SIZE) {
+        chunkedIndices.push(requestedIndices.slice(i, i + CHUNK_SIZE));
+      }
+
+      console.log(`Split ${requestedIndices.length} pages into ${chunkedIndices.length} chunks.`);
+
+      // Process chunks in parallel (limited concurrency could be added if needed, but 3-flash is fast)
+      const chunkPromises = chunkedIndices.map(async (indices, i) => {
+        const slicedBase64 = await extractPdfPagesByIndices(file, indices);
+        if (!slicedBase64) return [];
+
+        const chunkContent = [{
+          inlineData: { mimeType: 'application/pdf', data: slicedBase64 }
+        }];
+        return analyzeChunk(ai, chunkContent, subject, grade, range, i);
+      });
+
+      const results = await Promise.all(chunkPromises);
+      results.forEach(res => allItems.push(...res));
+
+    } catch (e) {
+      console.error("Chunking failed, falling back to full file", e);
+      // Fallback to single call
+      const base64Data = await fileToBase64(file);
+      const chunkContent = [{ inlineData: { mimeType, data: base64Data } }];
+      allItems = await analyzeChunk(ai, chunkContent, subject, grade, range);
+    }
   } else {
-      // Non-PDF or no range: Single Call
-      let contents: any[] = [];
-      if (mimeType === 'text/plain') {
-          const textContent = await readTextFile(file);
-          contents = [{ text: textContent }];
-      } else {
-          const base64Data = await fileToBase64(file);
-          contents = [{ inlineData: { mimeType, data: base64Data } }];
-      }
-      allItems = await analyzeChunk(ai, contents, subject, grade, range);
+    // Non-PDF or no range: Single Call
+    let contents: any[] = [];
+    if (mimeType === 'text/plain') {
+      const textContent = await readTextFile(file);
+      contents = [{ text: textContent }];
+    } else {
+      const base64Data = await fileToBase64(file);
+      contents = [{ inlineData: { mimeType, data: base64Data } }];
+    }
+    allItems = await analyzeChunk(ai, contents, subject, grade, range);
   }
 
   // Deduplication & Filtering Logic
@@ -504,56 +504,59 @@ export const parseStandardsAndGeneratePlan = async (
   const headers = ['성취기준', '내용체계', '영역', '단원명', '평가요소', '교육과정', '핵심아이디어', '단원', '구분', '순서', '시기', '차시'];
 
   for (const item of allItems) {
-      let stdText = (item.standard || '').trim();
-      
-      // 1. Basic Cleanup
-      // Remove leading/trailing markers if any (like - or bullet)
-      stdText = stdText.replace(/^[-·*]\s*/, '');
-      
-      if (!stdText || stdText.length < 10) continue;
+    let stdText = (item.standard || '').trim();
 
-      // 2. Identify Code
-      const codeMatch = stdText.match(/\[[^\]]+\]/);
-      const hasCode = !!codeMatch;
-      
-      // 3. Extract pure text body for comparison
-      // Remove the code part to compare "content" content
-      const bodyText = stdText.replace(/\[[^\]]+\]/g, '').trim();
-      const cleanBody = bodyText.replace(/[\s\u3000]+/g, ''); // Remove all whitespace
+    // 1. Basic Cleanup
+    // Remove leading/trailing markers if any (like - or bullet)
+    stdText = stdText.replace(/^[-·*]\s*/, '');
 
-      // 4. Content Filters
-      // a. Filter Headers
-      if (headers.some(h => cleanBody === h || cleanBody.includes('성취기준코드'))) continue;
+    if (!stdText || stdText.length < 10) continue;
 
-      // b. Filter by ending (Must be a sentence ending in '다' or '다.' if no code is present)
-      const endsWithDa = /[다\.?]$/.test(bodyText);
-      const endsWithNoun = /[임음함]$/.test(bodyText); // Also accept noun endings if valid
-      
-      // User complaint: "Items without code are being extracted".
-      // We will prefer items with codes. If we have a duplicate content, keep the one with code.
-      // If an item has NO code and does NOT end in '다'/'임'/'음', strictly reject. (Noun phrases like "일차방정식" rejected)
-      if (!hasCode && !endsWithDa && !endsWithNoun) continue;
+    // 2. Identify Code
+    const codeMatch = stdText.match(/\[[^\]]+\]/);
+    const hasCode = !!codeMatch;
 
-      // c. Filter if Standard is same as Unit
-      if (item.unit && item.unit.replace(/\s+/g, '') === cleanBody) continue;
+    // 3. Extract pure text body for comparison
+    // Remove the code part to compare "content" content
+    const bodyText = stdText.replace(/\[[^\]]+\]/g, '').trim();
+    const cleanBody = bodyText.replace(/[\s\u3000]+/g, ''); // Remove all whitespace
 
-      // 5. Smart Deduplication
-      if (bodyMap.has(cleanBody)) {
-          // Collision found. 
-          const index = bodyMap.get(cleanBody)!;
-          const existingItem = finalItems[index];
-          const existingHasCode = /\[[^\]]+\]/.test(existingItem.standard);
-          
-          if (!existingHasCode && hasCode) {
-              // Replace existing (non-code) with new (coded) item
-              finalItems[index] = item;
-          }
-          // Else: Existing has code (or neither do), keep existing (first one found)
-      } else {
-          // New content
-          bodyMap.set(cleanBody, finalItems.length);
-          finalItems.push(item);
+    // 4. Content Filters
+    // a. Filter Headers
+    if (headers.some(h => cleanBody === h || cleanBody.includes('성취기준코드'))) continue;
+
+    // b. Filter by ending (Must be a sentence ending in '다' or '다.' if no code is present)
+    const endsWithDa = /[다\.?]$/.test(bodyText);
+    const endsWithNoun = /[임음함]$/.test(bodyText); // Also accept noun endings if valid
+
+    // Removed the strict requirement to ONLY have codes or specific endings.
+    // Since OCR/PDF extraction of curriculum tables is messy, 
+    // we trust the AI structural extraction more here for valid row entries.
+    if (!hasCode && !endsWithDa && !endsWithNoun) {
+      // Still strictly filter out very short obvious header/noise words 
+      if (cleanBody.length < 5) continue;
+    }
+
+    // c. Filter if Standard is same as Unit
+    if (item.unit && item.unit.replace(/\s+/g, '') === cleanBody) continue;
+
+    // 5. Smart Deduplication
+    if (bodyMap.has(cleanBody)) {
+      // Collision found. 
+      const index = bodyMap.get(cleanBody)!;
+      const existingItem = finalItems[index];
+      const existingHasCode = /\[[^\]]+\]/.test(existingItem.standard);
+
+      if (!existingHasCode && hasCode) {
+        // Replace existing (non-code) with new (coded) item
+        finalItems[index] = item;
       }
+      // Else: Existing has code (or neither do), keep existing (first one found)
+    } else {
+      // New content
+      bodyMap.set(cleanBody, finalItems.length);
+      finalItems.push(item);
+    }
   }
 
   return finalItems.map((item: any, idx: number) => ({
@@ -581,19 +584,19 @@ export const generateNotesFromMaterial = async (
 
   const ai = new GoogleGenAI({ apiKey });
   const mimeType = getMimeType(file);
-  
+
   let contentPart: any;
   try {
     if (mimeType === 'text/plain') {
-        const text = await readTextFile(file);
-        contentPart = { text };
+      const text = await readTextFile(file);
+      contentPart = { text };
     } else {
-        const base64 = await fileToBase64(file);
-        contentPart = { inlineData: { mimeType, data: base64 } };
+      const base64 = await fileToBase64(file);
+      contentPart = { inlineData: { mimeType, data: base64 } };
     }
   } catch (e) {
-      console.error("File reading failed", e);
-      return '';
+    console.error("File reading failed", e);
+    return '';
   }
 
   const prompt = `
@@ -625,71 +628,71 @@ export const generateNotesFromMaterial = async (
 };
 
 export const extractGradeGoalsFromFile = async (file: File): Promise<{ gradeGoal: string; humanIdeal: string }> => {
-    const apiKey = requireApiKey();
-    if (!apiKey) return { gradeGoal: '', humanIdeal: '' };
-    const ai = new GoogleGenAI({ apiKey });
+  const apiKey = requireApiKey();
+  if (!apiKey) return { gradeGoal: '', humanIdeal: '' };
+  const ai = new GoogleGenAI({ apiKey });
 
-    const mimeType = getMimeType(file);
-    let contentPart: any = {};
-    try {
-        if (mimeType === 'text/plain') {
-            contentPart = { text: await readTextFile(file) };
-        } else {
-            contentPart = { inlineData: { mimeType, data: await fileToBase64(file) } };
-        }
-    } catch (e) {
-        console.error(e);
-        return { gradeGoal: '', humanIdeal: '' };
+  const mimeType = getMimeType(file);
+  let contentPart: any = {};
+  try {
+    if (mimeType === 'text/plain') {
+      contentPart = { text: await readTextFile(file) };
+    } else {
+      contentPart = { inlineData: { mimeType, data: await fileToBase64(file) } };
     }
+  } catch (e) {
+    console.error(e);
+    return { gradeGoal: '', humanIdeal: '' };
+  }
 
-    const prompt = `
+  const prompt = `
     Extract the "Grade Level Goal" (학년 중점 목표) and "Ideal Human Image" (학년 인간상/핵심역량) from this document.
     Return JSON: { "gradeGoal": "...", "humanIdeal": "..." }
     If not found, return empty strings.
     `;
-    
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: [contentPart, { text: prompt }],
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        gradeGoal: { type: Type.STRING },
-                        humanIdeal: { type: Type.STRING }
-                    }
-                }
-            }
-        });
-        const text = response.text;
-        return text ? JSON.parse(text) : { gradeGoal: '', humanIdeal: '' };
-    } catch(e) {
-        console.error(e);
-        return { gradeGoal: '', humanIdeal: '' };
-    }
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [contentPart, { text: prompt }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            gradeGoal: { type: Type.STRING },
+            humanIdeal: { type: Type.STRING }
+          }
+        }
+      }
+    });
+    const text = response.text;
+    return text ? JSON.parse(text) : { gradeGoal: '', humanIdeal: '' };
+  } catch (e) {
+    console.error(e);
+    return { gradeGoal: '', humanIdeal: '' };
+  }
 };
 
 export const extractEvaluationPlanFromFile = async (file: File): Promise<EvaluationPlanRow[]> => {
-    const apiKey = requireApiKey();
-    if (!apiKey) return [];
-    const ai = new GoogleGenAI({ apiKey });
-    
-    const mimeType = getMimeType(file);
-    let contentPart: any = {};
-    try {
-        if (mimeType === 'text/plain') {
-            contentPart = { text: await readTextFile(file) };
-        } else {
-            contentPart = { inlineData: { mimeType, data: await fileToBase64(file) } };
-        }
-    } catch (e) {
-        console.error(e);
-        return [];
-    }
+  const apiKey = requireApiKey();
+  if (!apiKey) return [];
+  const ai = new GoogleGenAI({ apiKey });
 
-    const prompt = `
+  const mimeType = getMimeType(file);
+  let contentPart: any = {};
+  try {
+    if (mimeType === 'text/plain') {
+      contentPart = { text: await readTextFile(file) };
+    } else {
+      contentPart = { inlineData: { mimeType, data: await fileToBase64(file) } };
+    }
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+
+  const prompt = `
     Extract the Evaluation Plan table from this document.
     Return a list of evaluation rows (Written Exams and Performance Tasks).
     JSON Array format.
@@ -697,39 +700,39 @@ export const extractEvaluationPlanFromFile = async (file: File): Promise<Evaluat
     Ensure ratios sum correctly if possible.
     `;
 
-    try {
-         const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: [contentPart, { text: prompt }],
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            category: { type: Type.STRING },
-                            name: { type: Type.STRING },
-                            maxScore: { type: Type.STRING },
-                            ratio: { type: Type.NUMBER },
-                            typeSelect: { type: Type.NUMBER },
-                            typeShort: { type: Type.NUMBER },
-                            typeEssay: { type: Type.NUMBER },
-                            typeOther: { type: Type.NUMBER },
-                            timing: { type: Type.STRING }
-                        }
-                    }
-                }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [contentPart, { text: prompt }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              category: { type: Type.STRING },
+              name: { type: Type.STRING },
+              maxScore: { type: Type.STRING },
+              ratio: { type: Type.NUMBER },
+              typeSelect: { type: Type.NUMBER },
+              typeShort: { type: Type.NUMBER },
+              typeEssay: { type: Type.NUMBER },
+              typeOther: { type: Type.NUMBER },
+              timing: { type: Type.STRING }
             }
-        });
-        const text = response.text;
-        if (!text) return [];
-        const rows = JSON.parse(text);
-        return rows.map((r: any, i: number) => ({ ...r, id: `imported-${Date.now()}-${i}` }));
-    } catch (e) {
-        console.error(e);
-        return [];
-    }
+          }
+        }
+      }
+    });
+    const text = response.text;
+    if (!text) return [];
+    const rows = JSON.parse(text);
+    return rows.map((r: any, i: number) => ({ ...r, id: `imported-${Date.now()}-${i}` }));
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
 }
 
 export const generateCriteriaFromRubric = async (
@@ -738,11 +741,11 @@ export const generateCriteriaFromRubric = async (
   rubricType: string,
   scale: '3' | '5'
 ): Promise<{ A: string; B: string; C: string; D: string; E: string }> => {
-    const apiKey = requireApiKey();
-    if (!apiKey) return { A: '', B: '', C: '', D: '', E: '' };
-    const ai = new GoogleGenAI({ apiKey });
+  const apiKey = requireApiKey();
+  if (!apiKey) return { A: '', B: '', C: '', D: '', E: '' };
+  const ai = new GoogleGenAI({ apiKey });
 
-    const prompt = `
+  const prompt = `
     Task: ${taskName}
     Rubric Elements: ${JSON.stringify(elements)}
     
@@ -753,113 +756,113 @@ export const generateCriteriaFromRubric = async (
     Language: Korean.
     `;
 
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: [{ text: prompt }],
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        A: { type: Type.STRING },
-                        B: { type: Type.STRING },
-                        C: { type: Type.STRING },
-                        D: { type: Type.STRING },
-                        E: { type: Type.STRING }
-                    }
-                }
-            }
-        });
-        const text = response.text;
-        return text ? JSON.parse(text) : { A: '', B: '', C: '', D: '', E: '' };
-    } catch(e) {
-        console.error(e);
-        return { A: '', B: '', C: '', D: '', E: '' };
-    }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{ text: prompt }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            A: { type: Type.STRING },
+            B: { type: Type.STRING },
+            C: { type: Type.STRING },
+            D: { type: Type.STRING },
+            E: { type: Type.STRING }
+          }
+        }
+      }
+    });
+    const text = response.text;
+    return text ? JSON.parse(text) : { A: '', B: '', C: '', D: '', E: '' };
+  } catch (e) {
+    console.error(e);
+    return { A: '', B: '', C: '', D: '', E: '' };
+  }
 }
 
 export const extractRubricsFromFile = async (file: File): Promise<any[]> => {
-     const apiKey = requireApiKey();
-    if (!apiKey) return [];
-    const ai = new GoogleGenAI({ apiKey });
+  const apiKey = requireApiKey();
+  if (!apiKey) return [];
+  const ai = new GoogleGenAI({ apiKey });
 
-    const mimeType = getMimeType(file);
-    let contentPart: any = {};
-    try {
-        if (mimeType === 'text/plain') {
-            contentPart = { text: await readTextFile(file) };
-        } else {
-            contentPart = { inlineData: { mimeType, data: await fileToBase64(file) } };
-        }
-    } catch (e) {
-        console.error(e);
-        return [];
+  const mimeType = getMimeType(file);
+  let contentPart: any = {};
+  try {
+    if (mimeType === 'text/plain') {
+      contentPart = { text: await readTextFile(file) };
+    } else {
+      contentPart = { inlineData: { mimeType, data: await fileToBase64(file) } };
     }
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
 
-    const prompt = `
+  const prompt = `
     Extract Performance Task Rubrics from this file.
     Return JSON Array of tasks.
     Each task should have: name, standards (array of strings), coreIdea, rubricElements (array of objects with element, description, items(criteria, score)), baseScore.
     `;
 
-    try {
-        const response = await ai.models.generateContent({
-             model: 'gemini-3-flash-preview',
-             contents: [contentPart, { text: prompt }],
-             config: { responseMimeType: "application/json" } // Schema is complex, letting model infer or using 'any'
-        });
-        const text = response.text;
-        return text ? JSON.parse(text) : [];
-    } catch(e) {
-        console.error(e);
-        return [];
-    }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [contentPart, { text: prompt }],
+      config: { responseMimeType: "application/json" } // Schema is complex, letting model infer or using 'any'
+    });
+    const text = response.text;
+    return text ? JSON.parse(text) : [];
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
 }
 
-export const generateRubricItems = async (elementName: string, considerations: string): Promise<{criteria: string, score: string}[]> => {
-    const apiKey = requireApiKey();
-    if (!apiKey) return [];
-    const ai = new GoogleGenAI({ apiKey });
-    
-    const prompt = `
+export const generateRubricItems = async (elementName: string, considerations: string): Promise<{ criteria: string, score: string }[]> => {
+  const apiKey = requireApiKey();
+  if (!apiKey) return [];
+  const ai = new GoogleGenAI({ apiKey });
+
+  const prompt = `
     Create a rubric checklist for evaluation element: "${elementName}".
     Considerations: "${considerations}".
     Return JSON array: [{ "criteria": "...", "score": "..." }]
     `;
 
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: [{ text: prompt }],
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            criteria: { type: Type.STRING },
-                            score: { type: Type.STRING }
-                        }
-                    }
-                }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{ text: prompt }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              criteria: { type: Type.STRING },
+              score: { type: Type.STRING }
             }
-        });
-         const text = response.text;
-        return text ? JSON.parse(text) : [];
-    } catch(e) {
-        console.error(e);
-        return [];
-    }
+          }
+        }
+      }
+    });
+    const text = response.text;
+    return text ? JSON.parse(text) : [];
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
 }
 
 export const suggestCoreIdeas = async (subject: string, standards: string[], taskName: string): Promise<string[]> => {
-    const apiKey = requireApiKey();
-    if (!apiKey) return [];
-    const ai = new GoogleGenAI({ apiKey });
+  const apiKey = requireApiKey();
+  if (!apiKey) return [];
+  const ai = new GoogleGenAI({ apiKey });
 
-    const prompt = `
+  const prompt = `
     Subject: ${subject}
     Task: ${taskName}
     Standards: ${standards.join(', ')}
@@ -868,46 +871,46 @@ export const suggestCoreIdeas = async (subject: string, standards: string[], tas
     Return JSON array of strings.
     `;
 
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: [{ text: prompt }],
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                }
-            }
-        });
-        const text = response.text;
-        return text ? JSON.parse(text) : [];
-    } catch(e) {
-        console.error(e);
-        return [];
-    }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{ text: prompt }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        }
+      }
+    });
+    const text = response.text;
+    return text ? JSON.parse(text) : [];
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
 }
 
 export const suggestCoreIdeasFromFile = async (file: File, subject: string, standards: string[], taskName: string): Promise<string[]> => {
-    // Similar to suggestCoreIdeas but with file context
-     const apiKey = requireApiKey();
-    if (!apiKey) return [];
-    const ai = new GoogleGenAI({ apiKey });
+  // Similar to suggestCoreIdeas but with file context
+  const apiKey = requireApiKey();
+  if (!apiKey) return [];
+  const ai = new GoogleGenAI({ apiKey });
 
-    const mimeType = getMimeType(file);
-    let contentPart: any = {};
-    try {
-        if (mimeType === 'text/plain') {
-            contentPart = { text: await readTextFile(file) };
-        } else {
-            contentPart = { inlineData: { mimeType, data: await fileToBase64(file) } };
-        }
-    } catch (e) {
-        console.error(e);
-        return [];
+  const mimeType = getMimeType(file);
+  let contentPart: any = {};
+  try {
+    if (mimeType === 'text/plain') {
+      contentPart = { text: await readTextFile(file) };
+    } else {
+      contentPart = { inlineData: { mimeType, data: await fileToBase64(file) } };
     }
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
 
-    const prompt = `
+  const prompt = `
     Based on the file content (Curriculum Document), suggest "Core Ideas" for:
     Subject: ${subject}
     Task: ${taskName}
@@ -915,25 +918,25 @@ export const suggestCoreIdeasFromFile = async (file: File, subject: string, stan
     
     Return JSON array of strings.
     `;
-    
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: [contentPart, { text: prompt }],
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                }
-            }
-        });
-        const text = response.text;
-        return text ? JSON.parse(text) : [];
-    } catch(e) {
-         console.error(e);
-        return [];
-    }
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [contentPart, { text: prompt }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        }
+      }
+    });
+    const text = response.text;
+    return text ? JSON.parse(text) : [];
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
 }
 
 export const generateSemesterStandardsFromDomainFile = async (
@@ -943,36 +946,37 @@ export const generateSemesterStandardsFromDomainFile = async (
   range?: string,
   pageRange?: string
 ): Promise<{ A: string; B: string; C: string; D?: string; E?: string }> => {
-    const apiKey = requireApiKey();
-    if (!apiKey) return { A: '', B: '', C: '' };
-    const ai = new GoogleGenAI({ apiKey });
-    
-    // Handle PDF paging if necessary, similar to extractStandards
-    let contentParts: any[] = [];
+  const apiKey = requireApiKey();
+  if (!apiKey) return { A: '', B: '', C: '' };
+  const ai = new GoogleGenAI({ apiKey });
 
-    try {
-        if (getMimeType(file) === 'application/pdf' && pageRange) {
-            // Simple extraction for now, assuming helper works
-            const base64 = await extractPdfPages(file, pageRange);
-            if (base64) {
-                 contentParts = [{ inlineData: { mimeType: 'application/pdf', data: base64 } }];
-            } else {
-                 contentParts = [{ inlineData: { mimeType: 'application/pdf', data: await fileToBase64(file) } }];
-            }
-        } else {
-             const mimeType = getMimeType(file);
-             if (mimeType === 'text/plain') {
-                contentParts = [{ text: await readTextFile(file) }];
-             } else {
-                contentParts = [{ inlineData: { mimeType, data: await fileToBase64(file) } }];
-             }
-        }
-    } catch (e) {
-        console.error(e);
-        return { A: '', B: '', C: '' };
+  // Handle PDF paging if necessary, similar to extractStandards
+  let contentParts: any[] = [];
+
+  try {
+    if (getMimeType(file) === 'application/pdf' && pageRange) {
+      // Simple extraction for now, assuming helper works
+      const base64 = await extractPdfPages(file, pageRange);
+      if (base64) {
+        contentParts = [{ inlineData: { mimeType: 'application/pdf', data: base64 } }];
+      } else {
+        const fullBase64 = await fileToBase64(file);
+        contentParts = [{ inlineData: { mimeType: 'application/pdf', data: fullBase64 } }];
+      }
+    } else {
+      const mimeType = getMimeType(file);
+      if (mimeType === 'text/plain') {
+        contentParts = [{ text: await readTextFile(file) }];
+      } else {
+        contentParts = [{ inlineData: { mimeType, data: await fileToBase64(file) } }];
+      }
     }
+  } catch (e) {
+    console.error(e);
+    return { A: '', B: '', C: '' };
+  }
 
-    const prompt = `
+  const prompt = `
     Role: Expert Korean Curriculum Developer.
     Target Subject: "${subject}"
     Target Scale: ${scale} levels (A-${scale === '5' ? 'E' : 'C'}).
@@ -1000,28 +1004,28 @@ export const generateSemesterStandardsFromDomainFile = async (
     Return JSON: { "A": "...", "B": "...", "C": "..." ${scale === '5' ? ', "D": "...", "E": "..."' : ''} }
     `;
 
-    try {
-        const response = await ai.models.generateContent({
-             model: 'gemini-3-flash-preview',
-             contents: [...contentParts, { text: prompt }],
-             config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                         A: { type: Type.STRING },
-                         B: { type: Type.STRING },
-                         C: { type: Type.STRING },
-                         D: { type: Type.STRING },
-                         E: { type: Type.STRING }
-                    }
-                }
-             }
-        });
-        const text = response.text;
-        return text ? JSON.parse(text) : { A: '', B: '', C: '' };
-    } catch(e) {
-        console.error(e);
-        return { A: '', B: '', C: '' };
-    }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [...contentParts, { text: prompt }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            A: { type: Type.STRING },
+            B: { type: Type.STRING },
+            C: { type: Type.STRING },
+            D: { type: Type.STRING },
+            E: { type: Type.STRING }
+          }
+        }
+      }
+    });
+    const text = response.text;
+    return text ? JSON.parse(text) : { A: '', B: '', C: '' };
+  } catch (e) {
+    console.error(e);
+    return { A: '', B: '', C: '' };
+  }
 }
