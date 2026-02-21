@@ -451,8 +451,8 @@ export const parseStandardsAndGeneratePlan = async (
       const requestedIndices = parsePageRange(pageRange, totalPages);
 
       if (requestedIndices.length === 0) {
-        console.warn("No valid pages found in range");
-        return [];
+        console.warn("No valid pages found in range. Falling back to full PDF.");
+        throw new Error("Page range out of bounds");
       }
 
       // Split into chunks of 3 pages
@@ -467,7 +467,7 @@ export const parseStandardsAndGeneratePlan = async (
       // Process chunks in parallel (limited concurrency could be added if needed, but 3-flash is fast)
       const chunkPromises = chunkedIndices.map(async (indices, i) => {
         const slicedBase64 = await extractPdfPagesByIndices(file, indices);
-        if (!slicedBase64) return [];
+        if (!slicedBase64) throw new Error("Slicing failed");
 
         const chunkContent = [{
           inlineData: { mimeType: 'application/pdf', data: slicedBase64 }
@@ -999,6 +999,7 @@ export const generateSemesterStandardsFromDomainFile = async (
     3. **Output Requirements**:
        - The output must be **detailed** and **comprehensive**, reflecting the content of the uploaded file.
        - Do NOT return single sentences. Merge the details from the various units/domains into a cohesive narrative for each level.
+       - IMPORTANT: If you cannot find the exact tables, extrapolate based on the Achievement Standards present in the text. You MUST return populated fields, do NOT return empty strings.
        - Language: Korean (Formal educational tone).
 
     Return JSON: { "A": "...", "B": "...", "C": "..." ${scale === '5' ? ', "D": "...", "E": "..."' : ''} }
