@@ -1,0 +1,5 @@
+{
+  "name": "TeacherPlan AI",
+  "description": "A React application for Korean teachers to easily create Teaching and Evaluation Plans (교수학습 및 평가운영계획) with support for both Free Semester (Grade 1) and standard Grading systems (Grade 2/3).",
+  "requestFramePermissions": []
+}
