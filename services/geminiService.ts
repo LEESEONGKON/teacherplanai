@@ -1,5 +1,4 @@
 import { GoogleGenerativeAI, SchemaType as Type } from "@google/generative-ai";
-import { PDFDocument } from 'pdf-lib';
 import { PlanData, GradeLevel, TeachingPlanItem, EvaluationPlanRow, RubricElement, PerformanceTask } from "../types";
 
 // Helper to get API Key dynamically
@@ -93,81 +92,6 @@ const sanitizeText = (text: string): string => {
     .replace(/･/g, '·')
     .replace(/\uFF65/g, '·'); // Halfwidth Katakana Middle Dot
 };
-
-// --- PDF Slicing Helper ---
-
-// Parse page range string (e.g. "1, 3-5") into 0-based index array
-const parsePageRange = (rangeStr: string, totalPages: number): number[] => {
-  const pages = new Set<number>();
-  // Collapse whitespace around hyphens first, otherwise "5 - 10" splits into
-  // ["5", "-", "10"] and silently yields only pages 5 and 10.
-  const normalized = rangeStr.replace(/\s*[-~–—]\s*/g, '-');
-  const parts = normalized.split(/,|\s+/); // Split by comma or space
-
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-
-    if (trimmed.includes('-')) {
-      const [startStr, endStr] = trimmed.split('-');
-      const start = parseInt(startStr, 10);
-      const end = parseInt(endStr, 10);
-
-      if (!isNaN(start) && !isNaN(end)) {
-        // Ensure range is valid and within bounds
-        const s = Math.max(1, Math.min(start, end));
-        const e = Math.min(totalPages, Math.max(start, end));
-        for (let i = s; i <= e; i++) {
-          pages.add(i - 1); // 0-based
-        }
-      }
-    } else {
-      const page = parseInt(trimmed, 10);
-      if (!isNaN(page) && page >= 1 && page <= totalPages) {
-        pages.add(page - 1); // 0-based
-      }
-    }
-  }
-  return Array.from(pages).sort((a, b) => a - b);
-};
-
-// Extract specific pages from a PDF file and return as Base64 string
-// Accepts indices (0-based) array now to support chunking logic easier
-const extractPdfPagesByIndices = async (file: File, pageIndices: number[]): Promise<string | null> => {
-  try {
-    if (pageIndices.length === 0) return null;
-    const arrayBuffer = await file.arrayBuffer();
-    const pdfDoc = await PDFDocument.load(arrayBuffer);
-
-    const newPdf = await PDFDocument.create();
-    const copiedPages = await newPdf.copyPages(pdfDoc, pageIndices);
-
-    for (const page of copiedPages) {
-      newPdf.addPage(page);
-    }
-
-    const savedBase64 = await newPdf.saveAsBase64();
-    return savedBase64;
-  } catch (error) {
-    console.error("PDF Slicing Error:", error);
-    return null;
-  }
-};
-
-// Original Helper (Wrapper)
-const extractPdfPages = async (file: File, pageRange: string): Promise<string | null> => {
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdfDoc = await PDFDocument.load(arrayBuffer);
-    const totalPages = pdfDoc.getPageCount();
-    const pagesToKeep = parsePageRange(pageRange, totalPages);
-    return extractPdfPagesByIndices(file, pagesToKeep);
-  } catch (e) {
-    console.error(e);
-    return null;
-  }
-}
-
 
 export const generateTeacherGoals = async (
   subject: string,
@@ -362,290 +286,6 @@ export const generateSamplePlan = async (
 // Run async tasks with a bounded number in flight.
 // Gemini free-tier keys rate-limit by requests-per-minute, so firing every page
 // chunk at once turns a large page range into a wall of 429s.
-const CHUNK_CONCURRENCY = 3;
-
-const mapWithConcurrency = async <T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<R>
-): Promise<R[]> => {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-
-  const runner = async (): Promise<void> => {
-    while (cursor < items.length) {
-      const current = cursor++;
-      results[current] = await worker(items[current], current);
-    }
-  };
-
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, () => runner())
-  );
-  return results;
-};
-
-// --- Single Chunk Analyzer ---
-// Returns the extracted items plus any error, so the caller can report failures
-// once instead of firing an alert() per failed chunk.
-const analyzeChunk = async (
-  ai: GoogleGenerativeAI,
-  chunkContent: any[],
-  subject: string,
-  grade: GradeLevel,
-  range?: string,
-  chunkIndex?: number
-): Promise<{ items: any[]; error: string | null }> => {
-  const prompt = `
-    You are an expert Korean school teacher helper.
-    I have uploaded a document containing Curriculum Standards (성취기준).
-    
-    **Target Subject Name**: "${subject}" (Grade ${grade})
-    
-    **CRITICAL TASK**: 
-    1. **SUBJECT FILTER**: The uploaded file may contain standards for MULTIPLE different subjects. You must **ONLY** extract standards for "**${subject}**".
-    2. **STRICT FILTERING & FORMATTING**:
-       - **Target**: Extract ONLY formal "Achievement Standards" (성취기준).
-       - **Code Association**: Look for standard codes (e.g., [9수01-01], [12국어02-01]). If the code is in a separate column or line from the text, **PREPEND** the code to the standard text. 
-         - Example: "[9수01-01] 지수법칙을 이해한다."
-       - **CRITICAL EXCLUSIONS - DO NOT EXTRACT THESE**:
-         - **IGNORE** Unit names (e.g. "I. 수와 연산", "문자와 식").
-         - **IGNORE** Learning Objectives (often starting with bullet points or "학습목표").
-         - **IGNORE** Table headers.
-         - **IGNORE** Evaluation Criteria or Rubric Descriptions (평가기준, e.g., "도형의 성질을 이해하고... 판별하는 능력을 평가한다", "상/중/하" descriptions).
-         - **IGNORE** General descriptive text outlining the curriculum.
-       - **Validation**: 
-         - A valid standard MUST end with a verb phrase like "~한다", "~할 수 있다", "~이해한다".
-         - If a line is just a noun phrase (e.g. "일차방정식의 풀이"), **IGNORE IT**.
-         - **If a sentence talks about "evaluating an ability" (능력을 평가한다), IT IS NOT A STANDARD. IGNORE IT.**
-    
-    ${range ? `- **SCOPE**: Only extract standards that match this description: "${range}"` : ''}
-    
-    Please perform the following steps for the subject "${subject}":
-    1. Scan the text to find the table or list of Achievement Standards.
-    2. EXTRACT the Standard Code and Description.
-    3. ANALYZE each standard to determine the Unit Name (단원명). **CRITICAL: You MUST preserve any Roman numeral prefixes (e.g., "I. 수와 연산", "II. 방정식") exactly as they appear in the Unit Name.**
-    4. GENERATE an 'Evaluation Element' (평가 요소).
-    5. SUGGEST 'Teaching Methods' (수업 방법).
-    6. GENERATE 'Notes' (수업-평가 연계 주안점) strictly in this format:
-       [도입] ...
-       [수업] ...
-       [평가] ...
-    
-    **OUTPUT RULE**: 
-    - **JSON Mapping Requirement:**
-      - \`unit\`: The Unit Name (단원명), must preserve Roman numerals.
-      - \`standard\`: **CRITICAL**: This field MUST contain the actual Achievement Standard, including its code if it has one (e.g. "[9수01-01] 지수법칙을 이해한다."). Do NOT put the standard in the 'element' field.
-      - \`element\`: The Evaluation Element (평가요소, e.g., "지수법칙의 이해와 적용"). Do NOT put the full standard here.
-      - \`teachingMethod\`: Suggested teaching methods.
-      - \`notes\`: Notes separated into [도입], [수업], [평가].
-    - **Encoding Correction**: If the document contains the middle dot character '･' or '・', strictly treat it as '·' (Middle Dot).
-    - Return JSON Array.
-    `;
-
-  try {
-    const response = await ai.getGenerativeModel({
-      model: 'gemini-2.5-flash', generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              unit: { type: Type.STRING },
-              standard: { type: Type.STRING },
-              element: { type: Type.STRING },
-              teachingMethod: { type: Type.STRING },
-              notes: { type: Type.STRING }
-            }
-          }
-        }
-      }
-    }).generateContent([...chunkContent, { text: prompt }]);
-    const text = response.response.text();
-    return { items: text ? JSON.parse(text) : [], error: null };
-  } catch (e: any) {
-    console.warn(`Chunk ${chunkIndex} failed`, e);
-    return { items: [], error: e?.message || String(e) };
-  }
-}
-
-export const parseStandardsAndGeneratePlan = async (
-  file: File,
-  subject: string,
-  grade: GradeLevel,
-  range?: string,
-  pageRange?: string // Optional page range hint
-): Promise<TeachingPlanItem[]> => {
-  const apiKey = requireApiKey();
-  if (!apiKey) throw new Error("API Key missing");
-
-  const ai = new GoogleGenerativeAI(apiKey.toString());
-  const mimeType = getMimeType(file);
-
-  let allItems: any[] = [];
-  const chunkErrors: string[] = [];
-  let attemptedChunks = 0;
-
-  // CHUNKING LOGIC FOR PDF
-  // If PDF and pageRange is provided, chunk it into groups of 3 pages to avoid context loss
-  if (mimeType === 'application/pdf' && pageRange && pageRange.trim()) {
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(arrayBuffer);
-      const totalPages = pdfDoc.getPageCount();
-
-      // Get all requested page indices (0-based)
-      const requestedIndices = parsePageRange(pageRange, totalPages);
-
-      if (requestedIndices.length === 0) {
-        console.warn("No valid pages found in range. Falling back to full PDF.");
-        throw new Error("Page range out of bounds");
-      }
-
-      // Split into chunks of 3 pages
-      const CHUNK_SIZE = 3;
-      const chunkedIndices: number[][] = [];
-      for (let i = 0; i < requestedIndices.length; i += CHUNK_SIZE) {
-        chunkedIndices.push(requestedIndices.slice(i, i + CHUNK_SIZE));
-      }
-
-      console.log(`Split ${requestedIndices.length} pages into ${chunkedIndices.length} chunks.`);
-
-      // Process chunks with bounded concurrency to stay inside API rate limits
-      const results = await mapWithConcurrency(chunkedIndices, CHUNK_CONCURRENCY, async (indices, i) => {
-        const slicedBase64 = await extractPdfPagesByIndices(file, indices);
-        if (!slicedBase64) throw new Error("Slicing failed");
-
-        const chunkContent = [{
-          inlineData: { mimeType: 'application/pdf', data: slicedBase64 }
-        }];
-        return analyzeChunk(ai, chunkContent, subject, grade, range, i);
-      });
-
-      attemptedChunks = results.length;
-      results.forEach(res => {
-        allItems.push(...res.items);
-        if (res.error) chunkErrors.push(res.error);
-      });
-
-    } catch (e) {
-      console.error("Chunking failed, falling back to full file", e);
-      // Fallback to single call
-      const base64Data = await fileToBase64(file);
-      const chunkContent = [{ inlineData: { mimeType, data: base64Data } }];
-      const result = await analyzeChunk(ai, chunkContent, subject, grade, range);
-      attemptedChunks = 1;
-      allItems = result.items;
-      if (result.error) chunkErrors.push(result.error);
-    }
-  } else {
-    // Non-PDF or no range: Single Call
-    let contents: any[] = [];
-    if (mimeType === 'text/plain') {
-      const textContent = await readTextFile(file);
-      contents = [{ text: textContent }];
-    } else {
-      const base64Data = await fileToBase64(file);
-      contents = [{ inlineData: { mimeType, data: base64Data } }];
-    }
-    const result = await analyzeChunk(ai, contents, subject, grade, range);
-    attemptedChunks = 1;
-    allItems = result.items;
-    if (result.error) chunkErrors.push(result.error);
-  }
-
-  // Surface a single aggregated failure instead of one alert() per chunk.
-  // Only treated as fatal when nothing at all came back, so a partial result is still usable.
-  if (chunkErrors.length > 0 && allItems.length === 0) {
-    throw new Error(
-      chunkErrors.length === attemptedChunks
-        ? `AI 분석에 실패했습니다. (${chunkErrors[0]})`
-        : `AI 분석 중 ${chunkErrors.length}개 구간에서 오류가 발생했습니다. (${chunkErrors[0]})`
-    );
-  }
-  if (chunkErrors.length > 0) {
-    console.warn(`${chunkErrors.length}/${attemptedChunks} chunks failed but partial results were kept.`, chunkErrors);
-  }
-
-  // Deduplication & Filtering Logic
-  const finalItems: any[] = [];
-  const bodyMap = new Map<string, number>(); // cleanBody -> index in finalItems
-  const headers = ['성취기준', '내용체계', '영역', '단원명', '평가요소', '교육과정', '핵심아이디어', '단원', '구분', '순서', '시기', '차시'];
-
-  for (const item of allItems) {
-    let stdText = (item.standard || '').trim();
-
-    // 1. Basic Cleanup
-    // Remove leading/trailing markers if any (like - or bullet)
-    stdText = stdText.replace(/^[-·*]\s*/, '');
-
-    if (!stdText || stdText.length < 10) continue;
-
-    // 2. Identify Code
-    const codeMatch = stdText.match(/\[[^\]]+\]/);
-    const hasCode = !!codeMatch;
-
-    // 3. Extract pure text body for comparison
-    // Remove the code part to compare "content" content
-    const bodyText = stdText.replace(/\[[^\]]+\]/g, '').trim();
-    const cleanBody = bodyText.replace(/[\s\u3000]+/g, ''); // Remove all whitespace
-
-    // 4. Content Filters
-    // a. Filter Headers
-    if (headers.some(h => cleanBody === h || cleanBody.includes('성취기준코드'))) continue;
-
-    // b. Filter by ending (Must be a sentence ending in '다' or '다.' if no code is present)
-    const endsWithDa = /[다\.?]$/.test(bodyText);
-    const endsWithNoun = /[임음함]$/.test(bodyText); // Also accept noun endings if valid
-
-    // c. Filter generic evaluation or non-standard text
-    if (bodyText.includes('능력을 평가한다') || bodyText.includes('성취수준') || bodyText.includes('평가기준')) continue;
-
-    const isLongParagraph = bodyText.length > 100;
-    if (!hasCode && !endsWithDa && !endsWithNoun) {
-      if (cleanBody.length < 5) continue;
-      // Also drop long conversational paragraphs if they don't have codes, as they are likely curriculum intros
-      if (isLongParagraph) continue;
-    }
-
-    // d. Filter if Standard is same as Unit
-    if (item.unit && item.unit.replace(/\s+/g, '') === cleanBody) continue;
-
-    // 5. Smart Deduplication
-    if (bodyMap.has(cleanBody)) {
-      // Collision found. 
-      const index = bodyMap.get(cleanBody)!;
-      const existingItem = finalItems[index];
-      const existingHasCode = /\[[^\]]+\]/.test(existingItem.standard);
-
-      if (!existingHasCode && hasCode) {
-        // Replace existing (non-code) with new (coded) item
-        finalItems[index] = item;
-      }
-      // Else: Existing has code (or neither do), keep existing (first one found)
-    } else {
-      // New content
-      bodyMap.set(cleanBody, finalItems.length);
-      finalItems.push(item);
-    }
-  }
-
-  return finalItems.map((item: any) => ({
-    ...item,
-    unit: sanitizeText(item.unit),
-    standard: sanitizeText(item.standard),
-    element: sanitizeText(item.element),
-    teachingMethod: sanitizeText(item.teachingMethod),
-    notes: sanitizeText(item.notes),
-    id: createId('file-gen'),
-    period: '', // Ensure empty
-    hours: '',  // Ensure empty
-    remarks: '', // Ensure empty
-    method: []  // Ensure empty
-  }));
-};
-
 export const generateNotesFromMaterial = async (
   file: File,
   standard: string,
@@ -996,70 +636,52 @@ export const suggestCoreIdeasFromFile = async (file: File, subject: string, stan
   }
 }
 
-export const generateSemesterStandardsFromDomainFile = async (
+export const extractAchievementLevelsFromFile = async (
   file: File,
   scale: '3' | '5',
-  subject: string,
-  range?: string,
-  pageRange?: string
+  subject: string
 ): Promise<{ A: string; B: string; C: string; D?: string; E?: string }> => {
+  const empty = { A: '', B: '', C: '', D: '', E: '' };
   const apiKey = requireApiKey();
-  if (!apiKey) return { A: '', B: '', C: '' };
+  if (!apiKey) return empty;
   const ai = new GoogleGenerativeAI(apiKey.toString());
 
-  // Handle PDF paging if necessary, similar to extractStandards
-  let contentParts: any[] = [];
-
+  let contentPart: any;
   try {
-    if (getMimeType(file) === 'application/pdf' && pageRange) {
-      // Simple extraction for now, assuming helper works
-      const base64 = await extractPdfPages(file, pageRange);
-      if (base64) {
-        contentParts = [{ inlineData: { mimeType: 'application/pdf', data: base64 } }];
-      } else {
-        const fullBase64 = await fileToBase64(file);
-        contentParts = [{ inlineData: { mimeType: 'application/pdf', data: fullBase64 } }];
-      }
-    } else {
-      const mimeType = getMimeType(file);
-      if (mimeType === 'text/plain') {
-        contentParts = [{ text: await readTextFile(file) }];
-      } else {
-        contentParts = [{ inlineData: { mimeType, data: await fileToBase64(file) } }];
-      }
-    }
+    const mimeType = getMimeType(file);
+    contentPart = mimeType === 'text/plain'
+      ? { text: await readTextFile(file) }
+      : { inlineData: { mimeType, data: await fileToBase64(file) } };
   } catch (e) {
-    console.error(e);
-    return { A: '', B: '', C: '' };
+    console.error('Achievement level file read failed', e);
+    throw new Error('파일을 읽지 못했습니다.');
   }
 
+  const levels = scale === '5' ? 'A, B, C, D, E' : 'A, B, C';
+
   const prompt = `
-    Role: Expert Korean Curriculum Developer.
+    Role: Korean secondary school evaluation specialist.
     Target Subject: "${subject}"
-    Target Scale: ${scale} levels (A-${scale === '5' ? 'E' : 'C'}).
-    ${range ? `Content Scope: ${range}` : ''}
+    Target Scale: ${scale} levels (${levels}).
 
-    **OBJECTIVE**: Create a detailed "Semester Achievement Standard" (학기단위 성취수준) table.
+    **OBJECTIVE**: Extract the "Achievement Level" (성취수준) descriptions from the ATTACHED DOCUMENT
+    and aggregate them into one semester-level description per level (학기단위 성취수준).
 
-    **ALGORITHM**:
-    1. **Source Identification**:
-       - Priority 1: Look for "Domain Achievement Standards" (영역별 성취수준) tables in the text.
-       - Priority 2: Look for "Standard-specific Achievement Levels" (성취기준별 성취수준) if Priority 1 is missing.
-       - Priority 3: Use "Achievement Standards" (성취기준) text if levels are missing entirely.
+    **STRICT SOURCING RULE — THIS IS THE MOST IMPORTANT INSTRUCTION**:
+    - Use ONLY text that is actually present in the attached document.
+    - Look for 성취수준 tables: 영역별 성취수준 first, then 성취기준별 성취수준.
+    - **If the document contains NO 성취수준 descriptions, return EMPTY STRINGS for every level.**
+    - **NEVER invent, infer, or extrapolate levels from 성취기준 text.** An empty result is correct
+      and expected when the document does not contain achievement levels. Do not try to be helpful
+      by writing plausible descriptions — that would put unverified text into an official school document.
 
-    2. **Aggregation Strategy (Crucial)**:
-       - **For Level A**: Combine and synthesize ALL "Level A" descriptions found in the source (across all domains or standards). The result should be a rich, comprehensive paragraph describing what a top-performing student can do across the ENTIRE scope.
-       - **For Level B**: Combine all "Level B" descriptions.
-       - **For Level C**: Combine all "Level C" descriptions.
-       ${scale === '5' ? '- **For Level D/E**: Combine all corresponding descriptions.' : ''}
+    **AGGREGATION** (only for levels actually found):
+    - For each level, merge the descriptions found across all domains/standards into one cohesive
+      paragraph describing what a student at that level can do across the whole scope.
+    - Preserve the document's original wording as closely as possible.
+    - Language: Korean (formal educational tone).
 
-    3. **Output Requirements**:
-       - The output must be **detailed** and **comprehensive**, reflecting the content of the uploaded file.
-       - Do NOT return single sentences. Merge the details from the various units/domains into a cohesive narrative for each level.
-       - IMPORTANT: If you cannot find the exact tables, extrapolate based on the Achievement Standards present in the text. You MUST return populated fields, do NOT return empty strings.
-       - Language: Korean (Formal educational tone).
-
-    Return JSON: { "A": "...", "B": "...", "C": "..." ${scale === '5' ? ', "D": "...", "E": "..."' : ''} }
+    Return JSON: { "A": "...", "B": "...", "C": "..."${scale === '5' ? ', "D": "...", "E": "..."' : ''} }
     `;
 
   try {
@@ -1077,11 +699,102 @@ export const generateSemesterStandardsFromDomainFile = async (
           }
         }
       }
-    }).generateContent([...contentParts, { text: prompt }]);
+    }).generateContent([contentPart, { text: prompt }]);
+
     const text = response.response.text();
-    return text ? JSON.parse(text) : { A: '', B: '', C: '' };
-  } catch (e) {
-    console.error(e);
-    return { A: '', B: '', C: '' };
+    if (!text) return empty;
+    const parsed = JSON.parse(text);
+    return {
+      A: sanitizeText(parsed.A || ''),
+      B: sanitizeText(parsed.B || ''),
+      C: sanitizeText(parsed.C || ''),
+      D: sanitizeText(parsed.D || ''),
+      E: sanitizeText(parsed.E || ''),
+    };
+  } catch (e: any) {
+    console.error('Achievement level extraction failed', e);
+    throw new Error(e?.message || String(e));
   }
-}
+};
+
+/**
+ * 선택된 성취기준에 대해 평가요소·수업방법·주안점을 생성한다.
+ * 성취기준 자체는 내장 데이터에서 정확히 오므로, AI는 생성이 필요한 칸만 채운다.
+ */
+export const generatePlanDetailsForStandards = async (
+  items: { id: string; unit: string; standard: string }[],
+  subject: string,
+  grade: GradeLevel
+): Promise<Record<string, { element: string; teachingMethod: string; notes: string }>> => {
+  const apiKey = requireApiKey();
+  if (!apiKey) return {};
+  const ai = new GoogleGenerativeAI(apiKey.toString());
+
+  const itemList = items
+    .map((it, i) => `${i + 1}. [id=${it.id}] (영역: ${it.unit}) ${it.standard}`)
+    .join('\n');
+
+  const prompt = `
+    You are an expert Korean secondary school teacher.
+    Subject: ${subject} (Grade ${grade})
+
+    For EACH achievement standard below, produce three fields.
+    The "standard" text is authoritative and must NOT be rewritten or returned.
+
+    Input:
+    ${itemList}
+
+    For each item return:
+      - id: echo the id EXACTLY as given.
+      - element (평가요소): a short noun phrase naming what is assessed (e.g. "지수법칙의 이해와 적용"). Not a sentence.
+      - teachingMethod (수업방법): 2-3 concrete methods separated by ", " (e.g. "강의식, 모둠 탐구, 발표").
+      - notes (수업-평가 연계 주안점): EXACTLY this format on three lines:
+        [도입] ... (within 50 chars)
+        [수업] ... (within 100 chars)
+        [평가] ... (within 50 chars)
+
+    Return a JSON array with one object per input item, in the same order.
+    Language: Korean (formal educational tone).
+    `;
+
+  try {
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-2.5-flash', generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              element: { type: Type.STRING },
+              teachingMethod: { type: Type.STRING },
+              notes: { type: Type.STRING }
+            }
+          }
+        }
+      }
+    }).generateContent([{ text: prompt }]);
+
+    const text = response.response.text();
+    if (!text) return {};
+    const rows = JSON.parse(text);
+    if (!Array.isArray(rows)) return {};
+
+    const out: Record<string, { element: string; teachingMethod: string; notes: string }> = {};
+    rows.forEach((r: any, idx: number) => {
+      // Prefer the echoed id, but fall back to positional matching if the model drops it.
+      const target = items.find(it => it.id === r?.id) || items[idx];
+      if (!target) return;
+      out[target.id] = {
+        element: sanitizeText(r?.element || ''),
+        teachingMethod: sanitizeText(r?.teachingMethod || ''),
+        notes: sanitizeText(r?.notes || ''),
+      };
+    });
+    return out;
+  } catch (e: any) {
+    console.error('Plan detail generation failed', e);
+    throw new Error(e?.message || String(e));
+  }
+};

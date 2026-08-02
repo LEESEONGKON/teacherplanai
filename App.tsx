@@ -7,14 +7,14 @@ import TeachingPlan from './components/TeachingPlan';
 import EvaluationConfig from './components/EvaluationConfig';
 import RubricBuilder from './components/RubricBuilder';
 import Preview from './components/Preview';
-import FileAnalysis from './components/FileAnalysis';
-import { Layout, FileText, PieChart, CheckSquare, Printer, Save, FolderOpen, Settings, Key, X, Sparkles, HelpCircle, ZoomIn, ZoomOut, Maximize, Scissors, FileInput, Copy, Check } from 'lucide-react';
+import StandardsPicker from './components/StandardsPicker';
+import { Layout, FileText, PieChart, CheckSquare, Printer, Save, FolderOpen, Settings, Key, X, Sparkles, HelpCircle, ZoomIn, ZoomOut, Maximize, Scissors, FileInput, Copy, Check, BookOpen } from 'lucide-react';
 
 // Tabs with responsive labels (full label for title, short for UI)
 // Updated Order: Basic -> Analysis -> Plan -> Weights -> Rubrics -> Preview
 const TABS = [
   { id: 'basic', label: '1. 기본 정보', shortLabel: '1. 기본 정보', icon: Layout },
-  { id: 'analysis', label: '2. 파일 분석', shortLabel: '2. 파일 분석', icon: Sparkles },
+  { id: 'standards', label: '2. 성취기준 선택', shortLabel: '2. 성취기준', icon: BookOpen },
   { id: 'plan', label: '3. 교수학습 계획', shortLabel: '3. 교수학습', icon: FileText },
   { id: 'weights', label: '4. 평가 방법/비율', shortLabel: '4. 평가 비율', icon: PieChart },
   { id: 'rubrics', label: '5. 수행평가 기준', shortLabel: '5. 채점 기준', icon: CheckSquare },
@@ -529,7 +529,7 @@ const App: React.FC = () => {
             onChange={setData} 
           />
         )}
-        {activeTab === 'analysis' && <FileAnalysis data={data} onChange={setData} />}
+        {activeTab === 'standards' && <StandardsPicker data={data} onChange={setData} />}
         {activeTab === 'plan' && <TeachingPlan data={data} onChange={setData} />}
         {activeTab === 'weights' && <EvaluationConfig data={data} onChange={setData} />}
         {activeTab === 'rubrics' && <RubricBuilder data={data} onChange={setData} />}

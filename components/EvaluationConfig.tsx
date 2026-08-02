@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { PlanData, GradeLevel, EvaluationPlanRow, PerformanceTask } from '../types';
 import { Plus, Trash2, AlertCircle, Sparkles, Upload } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { extractEvaluationPlanFromFile, createId } from '../services/geminiService';
+import { extractEvaluationPlanFromFile, extractAchievementLevelsFromFile, createId } from '../services/geminiService';
 
 interface Props {
   data: PlanData;
@@ -50,6 +50,50 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
   const isFreeSemester = data.grade === GradeLevel.GRADE_1;
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  // 성취수준(A~E) 추출용 문서
+  const [levelFile, setLevelFile] = useState<File | null>(null);
+  const [isExtractingLevels, setIsExtractingLevels] = useState(false);
+
+  const handleExtractLevels = async () => {
+    if (!levelFile) return;
+    if (!data.subject) {
+      alert("'1. 기본 정보' 탭에서 과목명을 먼저 입력해주세요. (추출 정확도에 필요합니다)");
+      return;
+    }
+    if (!window.confirm('문서에서 성취수준을 추출해 아래 표에 덮어씁니다. 계속하시겠습니까?')) return;
+
+    setIsExtractingLevels(true);
+    try {
+      const result = await extractAchievementLevelsFromFile(levelFile, data.achievementScale, data.subject);
+      const keys = data.achievementScale === '5'
+        ? (['A', 'B', 'C', 'D', 'E'] as const)
+        : (['A', 'B', 'C'] as const);
+
+      const filled = keys.filter(k => !!result[k]);
+      if (filled.length === 0) {
+        alert(
+          '문서에서 성취수준을 찾지 못했습니다.\n\n' +
+          '· 성취기준만 있고 성취수준(A/B/C) 표가 없는 문서일 수 있습니다.\n' +
+          '· 한글(HWP) 파일은 읽을 수 없습니다. PDF로 저장 후 다시 시도해주세요.'
+        );
+        return;
+      }
+
+      onChange(prev => {
+        const next = { ...prev.achievementStandards };
+        keys.forEach(k => { if (result[k]) next[k] = result[k] as string; });
+        return { ...prev, achievementStandards: next };
+      });
+      setLevelFile(null);
+      alert(`${filled.join(', ')} 수준을 문서에서 추출해 채웠습니다.\n내용을 검토한 뒤 필요하면 수정하세요.`);
+    } catch (e: any) {
+      console.error(e);
+      alert(`성취수준 추출 중 오류가 발생했습니다.\n${e?.message || e}`);
+    } finally {
+      setIsExtractingLevels(false);
+    }
+  };
 
   useEffect(() => {
     const perfRows = data.evaluationRows.filter(r => r.category === '수행평가');
@@ -564,14 +608,42 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
         <div className="mb-8">
           <h2 className="text-xl font-bold text-gray-800 mb-4">3. 학기단위 성취수준</h2>
           
-           {/* Hint about File Analysis */}
-           <div className="w-full bg-green-50 p-6 rounded-lg border border-green-100 flex flex-col justify-center mb-6">
-             <p className="text-sm text-green-800 font-medium mb-1">
-               💡 학기단위 성취수준을 자동으로 생성하고 싶으신가요?
+           {/* 성취수준 문서에서 자동 채우기 */}
+           <div className="w-full bg-green-50 p-4 rounded-lg border border-green-100 mb-6">
+             <p className="text-sm text-green-900 font-bold mb-1 flex items-center gap-2">
+               <Upload size={16} /> 평가기준 문서에서 자동으로 채우기
              </p>
-             <p className="text-xs text-green-600">
-               상단의 <strong>[2. 파일 분석]</strong> 탭을 이용하면 영역별 성취수준 파일을 분석하여 이곳에 자동으로 채워줍니다.
+             <p className="text-xs text-green-700 mb-3 leading-relaxed">
+               국가교육과정정보센터(NCIC)의 <strong>「2022 개정 교육과정에 따른 평가기준」</strong> 중
+               담당 과목 문서를 올리면 성취수준 진술을 추출해 아래 표를 채웁니다.
+               <br />
+               <strong className="text-green-800">PDF·이미지·텍스트 파일만 읽을 수 있습니다.</strong>
+               한글(HWP) 파일은 한글에서 <strong>[PDF로 저장]</strong> 후 올려주세요.
+               <br />
+               문서에 성취수준이 없으면 <strong>아무것도 채우지 않습니다</strong> (임의로 지어내지 않습니다).
              </p>
+
+             <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+               <input
+                 type="file"
+                 accept=".pdf,.txt,.jpg,.jpeg,.png"
+                 onChange={e => setLevelFile(e.target.files?.[0] || null)}
+                 className="block w-full text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-green-600 file:text-white hover:file:bg-green-700 cursor-pointer"
+               />
+               <button
+                 onClick={handleExtractLevels}
+                 disabled={!levelFile || isExtractingLevels}
+                 className={`px-4 py-2 rounded text-xs font-bold text-white whitespace-nowrap transition-colors flex items-center justify-center gap-2 ${
+                   !levelFile || isExtractingLevels
+                     ? 'bg-gray-300 cursor-not-allowed'
+                     : 'bg-green-600 hover:bg-green-700 shadow-sm'
+                 }`}
+               >
+                 {isExtractingLevels
+                   ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> 분석 중...</>
+                   : <><Sparkles size={14} /> 성취수준 추출</>}
+               </button>
+             </div>
            </div>
 
           <table className="w-full text-sm border-collapse border border-gray-300">

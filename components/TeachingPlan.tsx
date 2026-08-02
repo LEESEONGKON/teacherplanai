@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { PlanData, TeachingPlanItem } from '../types';
-import { generateNotesFromMaterial, createId } from '../services/geminiService';
+import { generateNotesFromMaterial, generatePlanDetailsForStandards, createId } from '../services/geminiService';
 import { Plus, Trash2, GripVertical, Sparkles, FileText, X, Copy, Check, RotateCcw } from 'lucide-react';
 
 interface Props {
@@ -21,6 +21,66 @@ const TeachingPlan: React.FC<Props> = ({ data, onChange }) => {
   const [generatedNotes, setGeneratedNotes] = useState('');
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+
+  // Bulk fill of the generated columns (평가요소 / 수업방법 / 주안점)
+  const [isFillingDetails, setIsFillingDetails] = useState(false);
+
+  const handleFillDetails = async () => {
+    const targets = data.teachingPlans.filter(p =>
+      selectedIds.has(p.id) && (p.standard || '').trim()
+    );
+
+    if (targets.length === 0) {
+      alert(
+        selectedIds.size === 0
+          ? '먼저 채울 행을 왼쪽 체크박스로 선택해주세요.'
+          : '선택한 행에 성취기준이 비어 있습니다.\n성취기준이 있어야 내용을 생성할 수 있습니다.'
+      );
+      return;
+    }
+
+    const overwriting = targets.filter(p => p.element || p.teachingMethod || p.notes).length;
+    const confirmMsg =
+      `선택한 ${targets.length}개 행의 평가요소·수업방법·주안점을 AI로 생성합니다.\n` +
+      (overwriting > 0 ? `\n⚠️ 이미 내용이 있는 ${overwriting}개 행도 덮어씁니다.\n` : '') +
+      `\n계속하시겠습니까?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsFillingDetails(true);
+    try {
+      const details = await generatePlanDetailsForStandards(
+        targets.map(p => ({ id: p.id, unit: p.unit, standard: p.standard })),
+        data.subject,
+        data.grade
+      );
+
+      const filledCount = Object.keys(details).length;
+      if (filledCount === 0) {
+        alert('생성된 내용이 없습니다. 잠시 후 다시 시도해주세요.');
+        return;
+      }
+
+      onChange({
+        ...data,
+        teachingPlans: data.teachingPlans.map(p => {
+          const d = details[p.id];
+          if (!d) return p;
+          return {
+            ...p,
+            element: d.element || p.element,
+            teachingMethod: d.teachingMethod || p.teachingMethod,
+            notes: d.notes || p.notes,
+          };
+        }),
+      });
+      alert(`${filledCount}개 행을 채웠습니다.\n내용을 검토한 뒤 필요하면 수정하세요.`);
+    } catch (e: any) {
+      console.error(e);
+      alert(`AI 생성 중 오류가 발생했습니다.\n${e?.message || e}`);
+    } finally {
+      setIsFillingDetails(false);
+    }
+  };
 
   // Clear undo history after 5 seconds
   useEffect(() => {
@@ -218,12 +278,28 @@ const TeachingPlan: React.FC<Props> = ({ data, onChange }) => {
             
             <div className="flex items-center gap-2">
               {selectedIds.size > 0 && (
-                <button
-                  onClick={handleDeleteSelected}
-                  className="flex items-center gap-1 bg-red-100 text-red-600 hover:bg-red-200 px-3 py-1.5 rounded-md text-xs font-bold transition-colors"
-                >
-                  <Trash2 size={14} /> 선택 항목 삭제 ({selectedIds.size})
-                </button>
+                <>
+                  <button
+                    onClick={handleFillDetails}
+                    disabled={isFillingDetails}
+                    title="선택한 행의 평가요소·수업방법·주안점을 AI로 생성합니다"
+                    className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${
+                      isFillingDetails
+                        ? 'bg-gray-200 text-gray-500 cursor-wait'
+                        : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
+                    }`}
+                  >
+                    {isFillingDetails
+                      ? <><span className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" /> 생성 중...</>
+                      : <><Sparkles size={14} /> 선택 행 AI로 채우기 ({selectedIds.size})</>}
+                  </button>
+                  <button
+                    onClick={handleDeleteSelected}
+                    className="flex items-center gap-1 bg-red-100 text-red-600 hover:bg-red-200 px-3 py-1.5 rounded-md text-xs font-bold transition-colors"
+                  >
+                    <Trash2 size={14} /> 선택 항목 삭제 ({selectedIds.size})
+                  </button>
+                </>
               )}
               <button
                 onClick={addRow}

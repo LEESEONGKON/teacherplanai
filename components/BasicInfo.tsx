@@ -170,6 +170,37 @@ const BasicInfo: React.FC<Props> = ({ data, onChange }) => {
             />
           </div>
         </div>
+
+        {/* 적용 교육과정 (성취기준 선택 탭과 수행평가 기준 탭의 동작을 결정한다) */}
+        <div className="mt-6 pt-5 border-t border-gray-200">
+          <label className="block text-sm font-bold text-gray-700 mb-2">적용 교육과정</label>
+          <div className="flex flex-col sm:flex-row gap-3">
+            {(['2022', '2015'] as const).map(type => (
+              <label
+                key={type}
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-md border cursor-pointer transition-all ${
+                  data.curriculumType === type
+                    ? 'bg-indigo-50 border-indigo-500 text-indigo-700 font-bold ring-1 ring-indigo-500'
+                    : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="curriculumType"
+                  value={type}
+                  checked={data.curriculumType === type}
+                  onChange={() => handleChange('curriculumType', type)}
+                  className="w-4 h-4 text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                />
+                <span>{type === '2022' ? '2022 개정 (핵심 아이디어 포함)' : '2015 개정'}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            * <strong>2022 개정</strong>: 수행평가 작성 시 '핵심 아이디어' 입력란이 활성화됩니다.
+            내장된 성취기준 데이터는 2022 개정 기준입니다.
+          </p>
+        </div>
       </div>
 
       <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
