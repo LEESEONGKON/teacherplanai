@@ -37,6 +37,25 @@ const normalizePlanData = (parsed: any): PlanData => ({
   extraEvaluationItems: Array.isArray(parsed?.extraEvaluationItems) ? parsed.extraEvaluationItems : [],
 });
 
+// True only once the user has actually entered something. Without this the very
+// first visit would persist the untouched defaults, and every later visit would
+// claim to have "restored" work the user never did.
+const hasUserContent = (d: PlanData): boolean => {
+  if (d.schoolName || d.subject || d.teacherName || d.classRoom) return true;
+  if (d.gradeGoal || d.humanIdeal || d.teacherGoal || d.actionPlan) return true;
+  if (d.teachingPlans.length > 0 || d.extraEvaluationItems.length > 0) return true;
+  if (Object.values(d.achievementStandards).some(v => !!v)) return true;
+
+  const changed = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
+  return (
+    changed(d.evaluationRows, INITIAL_PLAN_DATA.evaluationRows) ||
+    changed(d.performanceTasks, INITIAL_PLAN_DATA.performanceTasks) ||
+    d.evaluationNote !== INITIAL_PLAN_DATA.evaluationNote ||
+    d.absenteePolicy !== INITIAL_PLAN_DATA.absenteePolicy ||
+    d.resultUtilization !== INITIAL_PLAN_DATA.resultUtilization
+  );
+};
+
 const loadDraft = (): PlanData | null => {
   try {
     const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
@@ -57,7 +76,7 @@ const App: React.FC = () => {
   // below can never race the restore and overwrite saved work with defaults.
   const [initialDraft] = useState(() => loadDraft());
   const [data, setData] = useState<PlanData>(initialDraft ?? INITIAL_PLAN_DATA);
-  const [showRestoreNotice, setShowRestoreNotice] = useState(initialDraft !== null);
+  const [showRestoreNotice, setShowRestoreNotice] = useState(initialDraft !== null && hasUserContent(initialDraft));
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -68,8 +87,15 @@ const App: React.FC = () => {
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(data));
-        setLastSavedAt(new Date());
+        if (hasUserContent(data)) {
+          localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(data));
+          setLastSavedAt(new Date());
+        } else {
+          // Nothing entered yet (or everything was cleared): keep storage clean
+          // so a fresh visit never shows a bogus restore banner.
+          localStorage.removeItem(DRAFT_STORAGE_KEY);
+          setLastSavedAt(null);
+        }
       } catch (e) {
         console.warn('Autosave failed (storage full or unavailable)', e);
       }
