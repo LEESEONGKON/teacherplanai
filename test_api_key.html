@@ -74,16 +74,12 @@
                     const modelNames = data.models.map(m => m.name);
                     let html = `<p class="success">Successfully retrieved ${modelNames.length} models!</p>`;
 
-                    if (modelNames.includes('models/gemini-1.5-flash')) {
-                        html += '<p class="success" style="font-weight: bold;">✅ You HAVE access to models/gemini-1.5-flash!</p>';
+                    // gemini-2.5-flash is the model every call in services/geminiService.ts uses.
+                    // If this one is missing, the app's AI features cannot work with this key.
+                    if (modelNames.includes('models/gemini-2.5-flash')) {
+                        html += '<p class="success" style="font-weight: bold;">✅ You HAVE access to models/gemini-2.5-flash (the model this app uses).</p>';
                     } else {
-                        html += '<p class="error" style="font-weight: bold;">❌ You DO NOT have access to models/gemini-1.5-flash.</p>';
-                    }
-
-                    if (modelNames.includes('models/gemini-2.0-flash')) {
-                        html += '<p class="success" style="font-weight: bold;">✅ You HAVE access to models/gemini-2.0-flash!</p>';
-                    } else {
-                        html += '<p class="error" style="font-weight: bold;">❌ You DO NOT have access to models/gemini-2.0-flash.</p>';
+                        html += '<p class="error" style="font-weight: bold;">❌ You DO NOT have access to models/gemini-2.5-flash — the app\'s AI features will fail with this key.</p>';
                     }
 
                     html += `<h3>Full List of Supported Models:</h3><pre>${modelNames.join('\\n')}</pre>`;

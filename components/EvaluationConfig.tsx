@@ -2,51 +2,54 @@ import React, { useEffect, useState } from 'react';
 import { PlanData, GradeLevel, EvaluationPlanRow, PerformanceTask } from '../types';
 import { Plus, Trash2, AlertCircle, Sparkles, Upload } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-import { extractEvaluationPlanFromFile } from '../services/geminiService';
+import { extractEvaluationPlanFromFile, createId } from '../services/geminiService';
 
 interface Props {
   data: PlanData;
-  onChange: (data: PlanData) => void;
+  // Accepts an updater so effects can derive from the latest state instead of a
+  // captured snapshot. App passes setData directly, so this is source-compatible.
+  onChange: React.Dispatch<React.SetStateAction<PlanData>>;
 }
+
+// Pure helper: derives the performance-task list from evaluation rows.
+// Kept outside the component so it can be called from functional state updates.
+const syncPerformanceTasks = (rows: EvaluationPlanRow[], existingTasks: PerformanceTask[]): PerformanceTask[] => {
+  const perfRows = rows.filter(r => r.category === '수행평가');
+
+  return perfRows.map(row => {
+    const existingById = existingTasks.find(t => t.id === row.id);
+    if (existingById) {
+      // Do NOT force overwrite the name.
+      // This allows Tab 5 (Rubrics) to have a specific task name (e.g. from file)
+      // that differs from the generic Area Name in Tab 4.
+      return existingById;
+    }
+
+    // Try to find by name match if ID match fails (legacy support)
+    const existingByName = existingTasks.find(t => t.name === row.name);
+    if (existingByName) {
+      return { ...existingByName, id: row.id, name: row.name };
+    }
+
+    // Create new if not found
+    return {
+      id: row.id,
+      name: row.name || '수행평가',
+      standards: [],
+      description: '',
+      criteria: { A: '', B: '', C: '', D: '', E: '' },
+      method: [],
+      rubricType: 'general',
+      rubricElements: [],
+      baseScore: '*기본 점수 ○점, 기본 점수를 부여할 수 없는 경우(미인정 결과, 불성실한 수업 참여 등) ○점'
+    };
+  });
+};
 
 const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
   const isFreeSemester = data.grade === GradeLevel.GRADE_1;
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-
-  // Helper to sync performance tasks based on evaluation rows
-  const syncPerformanceTasks = (rows: EvaluationPlanRow[]): PerformanceTask[] => {
-    const perfRows = rows.filter(r => r.category === '수행평가');
-    
-    return perfRows.map(row => {
-      const existingById = data.performanceTasks.find(t => t.id === row.id);
-      if (existingById) {
-        // CHANGED: Do NOT force overwrite the name. 
-        // This allows Tab 4 (Rubrics) to have a specific task name (e.g. from file) 
-        // that differs from the generic Area Name in Tab 3.
-        return existingById;
-      }
-      
-      // Try to find by name match if ID match fails (legacy support)
-      const existingByName = data.performanceTasks.find(t => t.name === row.name);
-      if (existingByName) {
-        return { ...existingByName, id: row.id, name: row.name };
-      }
-
-      // Create new if not found
-      return {
-        id: row.id,
-        name: row.name || '수행평가',
-        standards: [],
-        description: '',
-        criteria: { A: '', B: '', C: '', D: '', E: '' },
-        method: [],
-        rubricType: 'general',
-        rubricElements: [],
-        baseScore: '*기본 점수 ○점, 기본 점수를 부여할 수 없는 경우(미인정 결과, 불성실한 수업 참여 등) ○점'
-      };
-    });
-  };
 
   useEffect(() => {
     const perfRows = data.evaluationRows.filter(r => r.category === '수행평가');
@@ -65,50 +68,51 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
 
     if (needsUpdate) {
       console.log("EvaluationConfig: Detected desync between rows and tasks. Repairing...");
-      const syncedTasks = syncPerformanceTasks(data.evaluationRows);
-      onChange({ ...data, performanceTasks: syncedTasks });
+      onChange(prev => ({
+        ...prev,
+        performanceTasks: syncPerformanceTasks(prev.evaluationRows, prev.performanceTasks)
+      }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.evaluationRows.length, JSON.stringify(data.evaluationRows.map(r => r.id))]);
+  }, [data.evaluationRows.length, data.evaluationRows.map(r => r.id).join(',')]);
 
   useEffect(() => {
-    if (isFreeSemester) {
-      const hasWrittenExam = data.evaluationRows.some(row => row.category === '지필평가');
-      if (hasWrittenExam) {
-        const perfRows = data.evaluationRows.filter(row => row.category === '수행평가');
-        if (perfRows.length === 0) {
-           const rowId = Date.now().toString();
-           const newRow: EvaluationPlanRow = {
-              id: rowId,
-              category: '수행평가',
-              name: '과정 중심 평가',
-              maxScore: '100',
-              ratio: 100,
-              typeSelect: 0, typeShort: 0, typeEssay: 100, typeOther: 0,
-              timing: '수시'
-           };
-           const newTask: PerformanceTask = {
-             id: rowId,
-             name: newRow.name,
-             standards: [],
-             description: '',
-             criteria: { A: '', B: '', C: '', D: '', E: '' },
-             method: [],
-             rubricType: 'general',
-             rubricElements: [],
-             baseScore: '*기본 점수 ○점, 기본 점수를 부여할 수 없는 경우(미인정 결과, 불성실한 수업 참여 등) ○점'
-           };
+    if (!isFreeSemester) return;
 
-           onChange({ 
-             ...data, 
-             evaluationRows: [newRow],
-             performanceTasks: [newTask]
-           });
-        } else {
-           onChange({ ...data, evaluationRows: perfRows });
-        }
+    onChange(prev => {
+      const hasWrittenExam = prev.evaluationRows.some(row => row.category === '지필평가');
+      if (!hasWrittenExam) return prev;
+
+      const perfRows = prev.evaluationRows.filter(row => row.category === '수행평가');
+      if (perfRows.length > 0) {
+        return { ...prev, evaluationRows: perfRows };
       }
-    }
+
+      const rowId = createId('perf');
+      const newRow: EvaluationPlanRow = {
+        id: rowId,
+        category: '수행평가',
+        name: '과정 중심 평가',
+        maxScore: '100',
+        ratio: 100,
+        typeSelect: 0, typeShort: 0, typeEssay: 100, typeOther: 0,
+        timing: '수시'
+      };
+      const newTask: PerformanceTask = {
+        id: rowId,
+        name: newRow.name,
+        standards: [],
+        description: '',
+        criteria: { A: '', B: '', C: '', D: '', E: '' },
+        method: [],
+        rubricType: 'general',
+        rubricElements: [],
+        baseScore: '*기본 점수 ○점, 기본 점수를 부여할 수 없는 경우(미인정 결과, 불성실한 수업 참여 등) ○점'
+      };
+
+      return { ...prev, evaluationRows: [newRow], performanceTasks: [newTask] };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFreeSemester]);
 
   const handleFileUpload = async () => {
@@ -124,12 +128,11 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
     try {
         const newRows = await extractEvaluationPlanFromFile(uploadFile);
         if (newRows.length > 0) {
-            const newTasks = syncPerformanceTasks(newRows);
-            onChange({ 
-              ...data, 
+            onChange(prev => ({
+              ...prev,
               evaluationRows: newRows,
-              performanceTasks: newTasks
-            });
+              performanceTasks: syncPerformanceTasks(newRows, prev.performanceTasks)
+            }));
             alert("평가 계획을 성공적으로 불러왔습니다.");
             setUploadFile(null);
         } else {
@@ -145,7 +148,7 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
 
   const addRow = (category: '지필평가' | '수행평가') => {
     let defaultName = '';
-    const rowId = Date.now().toString();
+    const rowId = createId('row');
     
     if (category === '지필평가') {
       const existingWritten = data.evaluationRows.filter(r => r.category === '지필평가');

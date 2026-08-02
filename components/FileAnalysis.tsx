@@ -50,13 +50,19 @@ const FileAnalysis: React.FC<Props> = ({ data, onChange }) => {
 
     setIsAnalyzing(true);
 
+    // Failure reasons are collected here and reported once in the summary alert,
+    // rather than popping a dialog per failed page chunk.
+    let planError: string | null = null;
+    let stdError: string | null = null;
+
     // 1. Plan Task
     const planPromise = parseStandardsAndGeneratePlan(file, data.subject, data.grade, planRange, planPageRange)
         .catch(err => {
             console.error("Plan Analysis Error:", err);
-            return null; 
+            planError = err?.message || String(err);
+            return null;
         });
-        
+
     // 2. Semester Standards Task
     // Fallback: If stdPageRange is empty, use planPageRange. The API prompt now handles synthesis if table is missing.
     const effectiveStdPageRange = stdPageRange.trim() ? stdPageRange : planPageRange;
@@ -69,19 +75,25 @@ const FileAnalysis: React.FC<Props> = ({ data, onChange }) => {
         effectiveStdPageRange
     ).catch(err => {
         console.error("Standard Analysis Error:", err);
+        stdError = err?.message || String(err);
         return null;
     });
 
     try {
       const [newPlans, stdResult] = await Promise.all([planPromise, stdPromise]);
 
-      let message = "✅ 분석 및 적용이 완료되었습니다.\n----------------------------------\n";
+      const hasFailure = !!(planError || stdError);
+      let message = hasFailure
+        ? "⚠️ 분석이 완료되었으나 일부 작업에 실패했습니다.\n----------------------------------\n"
+        : "✅ 분석 및 적용이 완료되었습니다.\n----------------------------------\n";
       const newData = { ...data };
-      
+
       // 1. Apply Plans
       if (newPlans && newPlans.length > 0) {
           newData.teachingPlans = [...newData.teachingPlans, ...newPlans];
           message += `📄 [교수학습 계획]: ${newPlans.length}개의 성취기준이 추가되었습니다.\n`;
+      } else if (planError) {
+          message += `📄 [교수학습 계획]: 실패 - ${planError}\n`;
       } else {
           message += `📄 [교수학습 계획]: 추가된 항목이 없습니다. (성취기준 페이지 범위를 확인하세요)\n`;
       }
@@ -101,8 +113,14 @@ const FileAnalysis: React.FC<Props> = ({ data, onChange }) => {
           if (!stdPageRange.trim()) {
              message += `   (성취수준 페이지 미지정으로 인해 성취기준 내용을 바탕으로 생성됨)\n`;
           }
+      } else if (stdError) {
+          message += `📊 [성취수준]: 실패 - ${stdError}\n`;
       } else {
           message += `📊 [성취수준]: 변경된 내용이 없습니다.\n`;
+      }
+
+      if (hasFailure) {
+          message += `----------------------------------\nAPI 키가 유효한지, 사용량 한도를 초과하지 않았는지 확인해주세요.`;
       }
 
       onChange(newData);

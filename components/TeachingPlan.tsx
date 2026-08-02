@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { PlanData, TeachingPlanItem } from '../types';
-import { generateNotesFromMaterial } from '../services/geminiService';
+import { generateNotesFromMaterial, createId } from '../services/geminiService';
 import { Plus, Trash2, GripVertical, Sparkles, FileText, X, Copy, Check, RotateCcw } from 'lucide-react';
 
 interface Props {
@@ -35,7 +35,7 @@ const TeachingPlan: React.FC<Props> = ({ data, onChange }) => {
 
   const addRow = () => {
     const newRow: TeachingPlanItem = {
-      id: Date.now().toString(),
+      id: createId('plan'),
       unit: '',
       standard: '',
       element: '',

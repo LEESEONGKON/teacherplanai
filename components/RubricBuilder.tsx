@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { PlanData, PerformanceTask, ExtraEvaluationItem, RubricElement, RubricCriterion } from '../types';
 import { EVALUATION_METHODS, EXTRA_EVALUATION_METHODS } from '../constants';
 import { AlertCircle, Plus, Trash2, Sparkles, FolderPlus, Upload, X, Bot, ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
-import { generateCriteriaFromRubric, extractRubricsFromFile, generateRubricItems, suggestCoreIdeas, suggestCoreIdeasFromFile } from '../services/geminiService';
+import { generateCriteriaFromRubric, extractRubricsFromFile, generateRubricItems, suggestCoreIdeas, suggestCoreIdeasFromFile, createId } from '../services/geminiService';
 
 interface Props {
   data: PlanData;
@@ -156,11 +156,11 @@ const RubricBuilder: React.FC<Props> = ({ data, onChange }) => {
     if (!task) return;
 
     const newElement: RubricElement = {
-      id: Date.now().toString(),
+      id: createId('elem'),
       element: '',
       description: '',
       items: [
-        { id: Date.now().toString() + '-c', criteria: '', score: '' }
+        { id: createId('crit'), criteria: '', score: '' }
       ]
     };
     
@@ -191,7 +191,7 @@ const RubricBuilder: React.FC<Props> = ({ data, onChange }) => {
      if (!task) return;
 
      const newCriterion: RubricCriterion = {
-       id: Date.now().toString(),
+       id: createId('crit'),
        criteria: '',
        score: ''
      };
@@ -276,7 +276,7 @@ const RubricBuilder: React.FC<Props> = ({ data, onChange }) => {
           // Update the element name if user changed it in modal
           element: genElementName,
           items: genItems.map(item => ({
-            id: Date.now().toString() + Math.random(),
+            id: createId('crit'),
             criteria: item.criteria,
             score: item.score
           }))
@@ -381,6 +381,25 @@ const RubricBuilder: React.FC<Props> = ({ data, onChange }) => {
             return;
         }
 
+        // The extraction call has no response schema, so the model may omit
+        // rubricElements/items entirely or return them without ids. Every edit
+        // handler below matches by id, so normalize before storing.
+        const normalizeElements = (raw: any): RubricElement[] => {
+            if (!Array.isArray(raw)) return [];
+            return raw.map((el: any) => ({
+                id: el?.id || createId('elem'),
+                element: el?.element || '',
+                description: el?.description || '',
+                items: Array.isArray(el?.items)
+                    ? el.items.map((it: any) => ({
+                        id: it?.id || createId('crit'),
+                        criteria: it?.criteria || '',
+                        score: it?.score != null ? String(it.score) : ''
+                    }))
+                    : []
+            }));
+        };
+
         // Get available standards from current teaching plans for normalization
         const availableStandardsList: string[] = Array.from(new Set(
             data.teachingPlans.map(p => p.standard).filter((s): s is string => typeof s === 'string' && !!s)
@@ -390,12 +409,13 @@ const RubricBuilder: React.FC<Props> = ({ data, onChange }) => {
             const extracted = extractedTasks[index];
             if (!extracted) return existingTask;
 
-            const autoBaseScore = calculateAutoBaseScore(extracted.rubricElements || []);
+            const normalizedElements = normalizeElements(extracted.rubricElements);
+            const autoBaseScore = calculateAutoBaseScore(normalizedElements);
 
             // Normalize standards: try to match extracted standards with existing ones in teaching plans
             let normalizedStandards: string[] = existingTask.standards || [];
             const extractedStandards = extracted.standards; // explicit capture
-            if (extractedStandards && extractedStandards.length > 0) {
+            if (Array.isArray(extractedStandards) && extractedStandards.length > 0) {
                 normalizedStandards = extractedStandards.map((extStd: string) => {
                     // 1. Exact match check
                     if (availableStandardsList.includes(extStd)) return extStd;
@@ -416,9 +436,11 @@ const RubricBuilder: React.FC<Props> = ({ data, onChange }) => {
                 name: extracted.name || existingTask.name, 
                 standards: normalizedStandards,
                 coreIdea: extracted.coreIdea || existingTask.coreIdea,
-                rubricElements: extracted.rubricElements,
+                // Keep the existing elements if the model returned nothing usable,
+                // rather than wiping hand-entered criteria.
+                rubricElements: normalizedElements.length > 0 ? normalizedElements : existingTask.rubricElements,
                 criteria: (extracted.criteria && extracted.criteria.A) ? extracted.criteria : existingTask.criteria,
-                method: (extracted.method && extracted.method.length > 0) ? extracted.method : existingTask.method,
+                method: (Array.isArray(extracted.method) && extracted.method.length > 0) ? extracted.method : existingTask.method,
                 baseScore: autoBaseScore || extracted.baseScore || existingTask.baseScore,
                 rubricType: 'checklist',
             };
@@ -474,7 +496,7 @@ const RubricBuilder: React.FC<Props> = ({ data, onChange }) => {
 
   const addExtraItem = () => {
     const newItem: ExtraEvaluationItem = {
-      id: Date.now().toString(),
+      id: createId('extra'),
       standard: '',
       criteria: { upper: '', middle: '', lower: '' },
       method: [],

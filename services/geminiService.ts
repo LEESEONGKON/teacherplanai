@@ -25,6 +25,15 @@ const requireApiKey = (): string | null => {
   return key;
 };
 
+// Collision-proof id generator.
+// Date.now() alone collides when several rows are created within the same millisecond,
+// which desyncs evaluationRows from their linked performanceTasks.
+let idCounter = 0;
+export const createId = (prefix: string): string => {
+  idCounter += 1;
+  return `${prefix}-${Date.now().toString(36)}-${idCounter.toString(36)}`;
+};
+
 // Helper to convert file to base64
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -90,7 +99,10 @@ const sanitizeText = (text: string): string => {
 // Parse page range string (e.g. "1, 3-5") into 0-based index array
 const parsePageRange = (rangeStr: string, totalPages: number): number[] => {
   const pages = new Set<number>();
-  const parts = rangeStr.split(/,|\s+/); // Split by comma or space
+  // Collapse whitespace around hyphens first, otherwise "5 - 10" splits into
+  // ["5", "-", "10"] and silently yields only pages 5 and 10.
+  const normalized = rangeStr.replace(/\s*[-~–—]\s*/g, '-');
+  const parts = normalized.split(/,|\s+/); // Split by comma or space
 
   for (const part of parts) {
     const trimmed = part.trim();
@@ -323,15 +335,15 @@ export const generateSamplePlan = async (
       const parsed = JSON.parse(text);
 
       // Post-process evaluationRows to add IDs
-      const processedEvaluationRows = parsed.evaluationRows?.map((row: any, idx: number) => ({
+      const processedEvaluationRows = parsed.evaluationRows?.map((row: any) => ({
         ...row,
-        id: `eval-${Date.now()}-${idx}`
+        id: createId('eval')
       })) || [];
 
       // Post-process teachingPlans
-      const processedTeachingPlans = parsed.teachingPlans?.map((p: any, idx: number) => ({
+      const processedTeachingPlans = parsed.teachingPlans?.map((p: any) => ({
         ...p,
-        id: `gen-${Date.now()}-${idx}`
+        id: createId('gen')
       })) || [];
 
       return {
@@ -347,7 +359,35 @@ export const generateSamplePlan = async (
   }
 };
 
+// Run async tasks with a bounded number in flight.
+// Gemini free-tier keys rate-limit by requests-per-minute, so firing every page
+// chunk at once turns a large page range into a wall of 429s.
+const CHUNK_CONCURRENCY = 3;
+
+const mapWithConcurrency = async <T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> => {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  const runner = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const current = cursor++;
+      results[current] = await worker(items[current], current);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => runner())
+  );
+  return results;
+};
+
 // --- Single Chunk Analyzer ---
+// Returns the extracted items plus any error, so the caller can report failures
+// once instead of firing an alert() per failed chunk.
 const analyzeChunk = async (
   ai: GoogleGenerativeAI,
   chunkContent: any[],
@@ -355,7 +395,7 @@ const analyzeChunk = async (
   grade: GradeLevel,
   range?: string,
   chunkIndex?: number
-): Promise<any[]> => {
+): Promise<{ items: any[]; error: string | null }> => {
   const prompt = `
     You are an expert Korean school teacher helper.
     I have uploaded a document containing Curriculum Standards (성취기준).
@@ -423,12 +463,10 @@ const analyzeChunk = async (
       }
     }).generateContent([...chunkContent, { text: prompt }]);
     const text = response.response.text();
-    return text ? JSON.parse(text) : [];
+    return { items: text ? JSON.parse(text) : [], error: null };
   } catch (e: any) {
     console.warn(`Chunk ${chunkIndex} failed`, e);
-    // TEMPORARY: Alert the exact error to test what is crashing on GH pages
-    alert(`AI 텍스트 추출 중 오류가 발생했습니다 (설정의 API 키를 다시 저장해주세요): ${e.message || String(e)}`);
-    return [];
+    return { items: [], error: e?.message || String(e) };
   }
 }
 
@@ -446,6 +484,8 @@ export const parseStandardsAndGeneratePlan = async (
   const mimeType = getMimeType(file);
 
   let allItems: any[] = [];
+  const chunkErrors: string[] = [];
+  let attemptedChunks = 0;
 
   // CHUNKING LOGIC FOR PDF
   // If PDF and pageRange is provided, chunk it into groups of 3 pages to avoid context loss
@@ -472,8 +512,8 @@ export const parseStandardsAndGeneratePlan = async (
 
       console.log(`Split ${requestedIndices.length} pages into ${chunkedIndices.length} chunks.`);
 
-      // Process chunks in parallel (limited concurrency could be added if needed, but 3-flash is fast)
-      const chunkPromises = chunkedIndices.map(async (indices, i) => {
+      // Process chunks with bounded concurrency to stay inside API rate limits
+      const results = await mapWithConcurrency(chunkedIndices, CHUNK_CONCURRENCY, async (indices, i) => {
         const slicedBase64 = await extractPdfPagesByIndices(file, indices);
         if (!slicedBase64) throw new Error("Slicing failed");
 
@@ -483,15 +523,21 @@ export const parseStandardsAndGeneratePlan = async (
         return analyzeChunk(ai, chunkContent, subject, grade, range, i);
       });
 
-      const results = await Promise.all(chunkPromises);
-      results.forEach(res => allItems.push(...res));
+      attemptedChunks = results.length;
+      results.forEach(res => {
+        allItems.push(...res.items);
+        if (res.error) chunkErrors.push(res.error);
+      });
 
     } catch (e) {
       console.error("Chunking failed, falling back to full file", e);
       // Fallback to single call
       const base64Data = await fileToBase64(file);
       const chunkContent = [{ inlineData: { mimeType, data: base64Data } }];
-      allItems = await analyzeChunk(ai, chunkContent, subject, grade, range);
+      const result = await analyzeChunk(ai, chunkContent, subject, grade, range);
+      attemptedChunks = 1;
+      allItems = result.items;
+      if (result.error) chunkErrors.push(result.error);
     }
   } else {
     // Non-PDF or no range: Single Call
@@ -503,7 +549,23 @@ export const parseStandardsAndGeneratePlan = async (
       const base64Data = await fileToBase64(file);
       contents = [{ inlineData: { mimeType, data: base64Data } }];
     }
-    allItems = await analyzeChunk(ai, contents, subject, grade, range);
+    const result = await analyzeChunk(ai, contents, subject, grade, range);
+    attemptedChunks = 1;
+    allItems = result.items;
+    if (result.error) chunkErrors.push(result.error);
+  }
+
+  // Surface a single aggregated failure instead of one alert() per chunk.
+  // Only treated as fatal when nothing at all came back, so a partial result is still usable.
+  if (chunkErrors.length > 0 && allItems.length === 0) {
+    throw new Error(
+      chunkErrors.length === attemptedChunks
+        ? `AI 분석에 실패했습니다. (${chunkErrors[0]})`
+        : `AI 분석 중 ${chunkErrors.length}개 구간에서 오류가 발생했습니다. (${chunkErrors[0]})`
+    );
+  }
+  if (chunkErrors.length > 0) {
+    console.warn(`${chunkErrors.length}/${attemptedChunks} chunks failed but partial results were kept.`, chunkErrors);
   }
 
   // Deduplication & Filtering Logic
@@ -569,14 +631,14 @@ export const parseStandardsAndGeneratePlan = async (
     }
   }
 
-  return finalItems.map((item: any, idx: number) => ({
+  return finalItems.map((item: any) => ({
     ...item,
     unit: sanitizeText(item.unit),
     standard: sanitizeText(item.standard),
     element: sanitizeText(item.element),
     teachingMethod: sanitizeText(item.teachingMethod),
     notes: sanitizeText(item.notes),
-    id: `file-gen-${Date.now()}-${idx}`,
+    id: createId('file-gen'),
     period: '', // Ensure empty
     hours: '',  // Ensure empty
     remarks: '', // Ensure empty
@@ -659,7 +721,20 @@ export const extractGradeGoalsFromFile = async (file: File): Promise<{ gradeGoal
     `;
 
   try {
-    const response = await ai.getGenerativeModel({ model: 'gemini-2.5-flash' }).generateContent([contentPart, { text: prompt }]);
+    // JSON mode is required here: without it the model wraps the object in a
+    // ```json fence and JSON.parse throws, silently yielding empty fields.
+    const response = await ai.getGenerativeModel({
+      model: 'gemini-2.5-flash', generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            gradeGoal: { type: Type.STRING },
+            humanIdeal: { type: Type.STRING }
+          }
+        }
+      }
+    }).generateContent([contentPart, { text: prompt }]);
     const text = response.response.text();
     return text ? JSON.parse(text) : { gradeGoal: '', humanIdeal: '' };
   } catch (e) {
@@ -716,11 +791,11 @@ export const extractEvaluationPlanFromFile = async (file: File): Promise<Evaluat
           }
         }
       }
-    }).generateContent([{ text: prompt }]);
+    }).generateContent([contentPart, { text: prompt }]);
     const text = response.response.text();
     if (!text) return [];
     const rows = JSON.parse(text);
-    return rows.map((r: any, i: number) => ({ ...r, id: `imported-${Date.now()}-${i}` }));
+    return rows.map((r: any) => ({ ...r, id: createId('imported') }));
   } catch (e) {
     console.error(e);
     return [];
@@ -799,7 +874,7 @@ export const extractRubricsFromFile = async (file: File): Promise<any[]> => {
   try {
     const response = await ai.getGenerativeModel({
       model: 'gemini-2.5-flash', generationConfig: { responseMimeType: "application/json" } // Schema is complex, letting model infer or using 'any'
-    }).generateContent([{ text: prompt }]);
+    }).generateContent([contentPart, { text: prompt }]);
     const text = response.response.text();
     return text ? JSON.parse(text) : [];
   } catch (e) {

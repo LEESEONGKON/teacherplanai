@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Noto Sans KR', sans-serif;
+}
+
+/* Set print page size to A4 Landscape.
+   Preview.tsx injects a later @page rule to apply user-adjusted margins. */
+@page {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .page-break {
+    page-break-before: always;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+/* Horizontal tab strip in the header hides its scrollbar */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

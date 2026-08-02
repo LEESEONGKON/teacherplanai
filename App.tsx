@@ -8,7 +8,7 @@ import EvaluationConfig from './components/EvaluationConfig';
 import RubricBuilder from './components/RubricBuilder';
 import Preview from './components/Preview';
 import FileAnalysis from './components/FileAnalysis';
-import { Layout, FileText, PieChart, CheckSquare, Printer, Save, FolderOpen, Settings, Key, X, Sparkles, HelpCircle, ZoomIn, ZoomOut, Maximize, Scissors, FileInput, Copy } from 'lucide-react';
+import { Layout, FileText, PieChart, CheckSquare, Printer, Save, FolderOpen, Settings, Key, X, Sparkles, HelpCircle, ZoomIn, ZoomOut, Maximize, Scissors, FileInput, Copy, Check } from 'lucide-react';
 
 // Tabs with responsive labels (full label for title, short for UI)
 // Updated Order: Basic -> Analysis -> Plan -> Weights -> Rubrics -> Preview
@@ -23,11 +23,70 @@ const TABS = [
 
 type TabId = typeof TABS[number]['id'];
 
+const DRAFT_STORAGE_KEY = 'TEACHER_PLAN_DRAFT_V1';
+
+// Normalize any loaded object against the current shape so that a draft saved by an
+// older version (or a hand-edited JSON file) can never crash the editors that map
+// over these arrays.
+const normalizePlanData = (parsed: any): PlanData => ({
+  ...INITIAL_PLAN_DATA,
+  ...parsed,
+  teachingPlans: Array.isArray(parsed?.teachingPlans) ? parsed.teachingPlans : [],
+  evaluationRows: Array.isArray(parsed?.evaluationRows) ? parsed.evaluationRows : [],
+  performanceTasks: Array.isArray(parsed?.performanceTasks) ? parsed.performanceTasks : [],
+  extraEvaluationItems: Array.isArray(parsed?.extraEvaluationItems) ? parsed.extraEvaluationItems : [],
+});
+
+const loadDraft = (): PlanData | null => {
+  try {
+    const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return normalizePlanData(parsed);
+  } catch (e) {
+    console.warn('Draft restore failed', e);
+    return null;
+  }
+};
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('basic');
-  const [data, setData] = useState<PlanData>(INITIAL_PLAN_DATA);
+
+  // Read the draft exactly once, during the first render, so the autosave effect
+  // below can never race the restore and overwrite saved work with defaults.
+  const [initialDraft] = useState(() => loadDraft());
+  const [data, setData] = useState<PlanData>(initialDraft ?? INITIAL_PLAN_DATA);
+  const [showRestoreNotice, setShowRestoreNotice] = useState(initialDraft !== null);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+
   const [isGenerating, setIsGenerating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Debounced autosave. Without this, a refresh or crash loses hours of data entry,
+  // since the only other persistence is a manual JSON download.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(data));
+        setLastSavedAt(new Date());
+      } catch (e) {
+        console.warn('Autosave failed (storage full or unavailable)', e);
+      }
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [data]);
+
+  const handleDiscardDraft = () => {
+    if (!window.confirm('복원된 임시 저장 내용을 지우고 새로 시작하시겠습니까?\n(저장하지 않은 내용은 사라집니다)')) return;
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch (e) {
+      console.warn('Draft clear failed', e);
+    }
+    setData(INITIAL_PLAN_DATA);
+    setShowRestoreNotice(false);
+  };
 
   // Print Mode State
   const [isPrintMode, setIsPrintMode] = useState(false);
@@ -156,15 +215,8 @@ const App: React.FC = () => {
         if (confirmLoad) {
           // Merge with initial data to ensure structure exists, but prefer parsedData if available
           // Explicitly fallback to empty arrays if they are missing in the JSON to prevent crashes
-          const safeData: PlanData = {
-            ...INITIAL_PLAN_DATA,
-            ...parsedData,
-            teachingPlans: Array.isArray(parsedData.teachingPlans) ? parsedData.teachingPlans : [],
-            evaluationRows: Array.isArray(parsedData.evaluationRows) ? parsedData.evaluationRows : [],
-            performanceTasks: Array.isArray(parsedData.performanceTasks) ? parsedData.performanceTasks : [],
-          };
-          
-          setData(safeData);
+          setData(normalizePlanData(parsedData));
+          setShowRestoreNotice(false);
           alert('성공적으로 불러왔습니다.');
         }
       } catch (error) {
@@ -329,6 +381,15 @@ const App: React.FC = () => {
 
               {/* Right Side: Action Buttons */}
               <div className="flex items-center gap-2">
+                {lastSavedAt && (
+                  <span
+                    className="hidden lg:flex items-center gap-1 text-[11px] text-indigo-200 mr-1 whitespace-nowrap"
+                    title="작성 내용은 이 브라우저에 자동으로 임시 저장됩니다. 영구 보관하려면 [저장]으로 파일을 내려받으세요."
+                  >
+                    <Check size={12} /> 자동 저장됨 {lastSavedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+
                 {/* Global Print Button */}
                 <button 
                   onClick={() => setIsPrintMode(true)}
@@ -405,6 +466,34 @@ const App: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* Restored Draft Notice */}
+      {showRestoreNotice && (
+        <div className="no-print max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+          <div className="bg-amber-50 border-l-4 border-amber-400 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-r shadow-sm">
+            <p className="text-sm text-amber-900">
+              <strong>이전에 작성 중이던 내용을 복원했습니다.</strong>
+              <span className="text-xs text-amber-700 ml-2">
+                작업 내용은 이 브라우저에 자동 저장되지만, 영구 보관하려면 [저장]으로 파일을 내려받으세요.
+              </span>
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={handleDiscardDraft}
+                className="text-xs font-bold px-3 py-1.5 rounded border border-amber-300 bg-white text-amber-800 hover:bg-amber-100 transition-colors"
+              >
+                새로 시작
+              </button>
+              <button
+                onClick={() => setShowRestoreNotice(false)}
+                className="text-xs px-3 py-1.5 rounded text-amber-700 hover:bg-amber-100 transition-colors"
+              >
+                계속 작성
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
