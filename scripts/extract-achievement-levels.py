@@ -46,6 +46,17 @@ CODE_FIXES = {
 KNOWN_TEXT_DIFFS = {
     # 문서는 '의복 디자인의 요소를 적용한 개성 있는 옷차림을 통해 …' 로 확장 서술.
     ('기술·가정', '[9기가01-04]'),
+    # 문서가 성취기준을 '… 문장을 읽고' 에서 끊어 적었다(고시: '… 읽고 의미와 내용을 파악한다').
+    ('생활 독일어', '[9생독03-02]'),
+}
+
+# 성취수준 문서에 아예 실리지 않은 성취기준.
+# PDF 전체를 검색해 코드가 없음을 확인한 항목만 등재한다. 이 성취기준들은
+# 성취수준이 비어 있게 되고, 앱은 채우기에서 해당 항목을 건너뛴다.
+KNOWN_MISSING = {
+    ('생활 독일어', '[9생독05-04]'),
+    ('생활 일본어', '[9생일05-05]'),
+    ('생활 베트남어', '[9생베05-05]'),
 }
 
 
@@ -259,16 +270,105 @@ def known_subjects(level: str):
     return [s['name'] for s in data['subjects']]
 
 
+def code_to_subject(level: str):
+    """코드 -> 과목명. 한 PDF에 여러 과목이 실린 문서를 가를 때 쓴다."""
+    data = json.loads((REPO / 'data' / f'curriculum-2022-{level}.json').read_text(encoding='utf-8'))
+    out = {}
+    for s in data['subjects']:
+        for st in s['standards']:
+            out.setdefault(st['c'], s['name'])
+    return out
+
+
+def validate_and_store(subject, extracted, order, official, bundle):
+    """한 과목의 추출 결과를 검증하고, 통과한 경우에만 번들에 담는다."""
+    print(f'\n=== {subject} ===  추출 {len(order)}개 / 공식 {len(official)}개')
+
+    mismatched, near_miss, missing_levels, unknown = [], [], [], []
+    for code in order:
+        rec = extracted[code]
+        if code not in official:
+            unknown.append(code)
+            continue
+        # 1열 성취기준 원문 대조 = 줄바꿈 결합 규칙 검증.
+        # 사회 일부 행은 성취기준 셀 안에 '※ 내용 체계표의 가치·태도 요소를 …' 같은
+        # 편집 주석이 함께 들어 있어, 대조 전에 떼어낸다.
+        got = re.sub(r'^\[[^\]]+\]\s*', '', rec['standard'])
+        # 성취기준 칸에 편집 주석(※ …)이나 탐구 활동 목록이 함께 들어 있는
+        # 문서가 있다(사회·과학). 대조 전에 떼어낸다.
+        got = normalize(re.split(r'※|<탐구\s*활동>|<실험\s*활동>|•', got)[0])
+        want = official[code]
+        a, b = got.replace(' ', ''), want.replace(' ', '')
+        if a != b:
+            # 완전 불일치는 추출 오류, 근소한 차이는 성취수준 문서와 고시 원문의
+            # 실제 표현 차이다. 둘을 구분해서 후자는 통과시키되 보고한다.
+            ratio = difflib.SequenceMatcher(None, a, b).ratio()
+            if (subject, code) in KNOWN_TEXT_DIFFS or ratio >= 0.9:
+                near_miss.append((code, want, got, ratio))
+            else:
+                mismatched.append((code, want, got, ratio))
+        if sorted(rec['levels']) not in (['A', 'B', 'C'], ['A', 'B', 'C', 'D', 'E']):
+            missing_levels.append((code, sorted(rec['levels'])))
+
+    known_gap = [c for c in official if c not in extracted and (subject, c) in KNOWN_MISSING]
+    not_found = [c for c in official if c not in extracted and (subject, c) not in KNOWN_MISSING]
+
+    # 교과에 따라 5단계(A~E)와 3단계(A~C)가 갈린다. 과목 안에서는 한 가지로
+    # 통일되어야 하며, 섞여 있으면 표를 잘못 읽은 것이므로 저장하지 않는다.
+    shapes = {''.join(sorted(extracted[c]['levels'])) for c in order}
+    scale = None
+    if len(shapes) == 1:
+        shape = next(iter(shapes))
+        scale = {'ABCDE': '5', 'ABC': '3'}.get(shape)
+
+    print(f'  성취수준 단계             : {scale + "단계" if scale else f"판별 불가 {sorted(shapes)}"}')
+    print(f'  성취기준 원문 대조 불일치 : {len(mismatched)}')
+    print(f'  표현 차이(경미, 통과)     : {len(near_miss)}')
+    print(f'  수준 누락                : {len(missing_levels)}')
+    print(f'  데이터셋에 없는 코드      : {len(unknown)}')
+    print(f'  추출되지 않은 성취기준    : {len(not_found)}')
+    if known_gap:
+        print(f'  문서 미수록(확인됨)       : {len(known_gap)}  {known_gap}')
+
+    for code, want, got, ratio in mismatched[:3]:
+        print(f'    [{code}] 유사도 {ratio:.2f}\n      공식: {want[:90]}\n      추출: {got[:90]}')
+    for code, want, got, ratio in near_miss:
+        print(f'    ~ [{code}] 유사도 {ratio:.3f} — 성취수준 문서의 표현이 고시 원문과 다름')
+        print(f'        고시: {want}')
+        print(f'        문서: {got}')
+    for code, lv in missing_levels[:3]:
+        print(f'    [{code}] 수준 {lv}')
+    if not_found[:5]:
+        print(f'    누락 코드: {not_found[:5]}')
+
+    if mismatched or missing_levels or unknown or not_found or not scale:
+        if not scale:
+            print(f'    한 과목 안에 수준 구성이 섞여 있습니다: {sorted(shapes)}')
+        print('  => 검증 실패. 이 과목은 저장하지 않습니다.')
+        return False
+
+    bundle['subjects'][subject] = {
+        'scale': scale,
+        'standards': {code: extracted[code]['levels'] for code in order},
+    }
+    print('  => 검증 통과')
+    return True
+
+
 def main():
     argv = sys.argv[1:]
     level = 'middle'
     if argv and argv[0] in ('middle', 'high'):
         level = argv.pop(0)
-    if len(argv) < 2 or len(argv) % 2 == 1:
+
+    auto = bool(argv) and argv[0] == '--auto'
+    if auto:
+        argv.pop(0)
+
+    if not argv or (not auto and len(argv) % 2 == 1):
         print(__doc__)
         sys.exit(1)
 
-    pairs = [(argv[i], Path(argv[i + 1])) for i in range(0, len(argv), 2)]
     out_path = REPO / 'data' / f'achievement-levels-2022-{level}.json'
     bundle = json.loads(out_path.read_text(encoding='utf-8')) if out_path.exists() else {}
     bundle.setdefault('source', '')
@@ -276,93 +376,55 @@ def main():
 
     total_fail = 0
 
-    for subject, pdf_path in pairs:
-        if not pdf_path.exists():
-            print(f'!! 파일 없음: {pdf_path}')
-            total_fail += 1
-            continue
-
-        official = load_official(subject, level)
-        if not official:
-            names = known_subjects(level)
-            close = [n for n in names if subject in n or n in subject][:5]
-            print(f'\n=== {subject} ===')
-            print(f'!! 교육과정 데이터에 없는 과목명입니다 ({level}).')
-            if close:
-                print(f'   혹시 이건가요? {close}')
-            print(f'   전체 과목명은 data/curriculum-2022-{level}.json 에 있습니다.')
-            total_fail += 1
-            continue
-
-        extracted, order = extract(pdf_path, subject, set(official))
-        print(f'\n=== {subject} ===  추출 {len(extracted)}개 / 공식 {len(official)}개')
-
-        mismatched, near_miss, missing_levels, unknown = [], [], [], []
-        for code in order:
-            rec = extracted[code]
-            if code not in official:
-                unknown.append(code)
+    if auto:
+        # 한 PDF에 여러 과목이 실린 문서(생활외국어 8과목 등)를 코드로 갈라 처리한다.
+        owner = code_to_subject(level)
+        for pdf_path in (Path(a) for a in argv):
+            if not pdf_path.exists():
+                print(f'!! 파일 없음: {pdf_path}')
+                total_fail += 1
                 continue
-            # 1열 성취기준 원문 대조 = 줄바꿈 결합 규칙 검증.
-            # 사회 일부 행은 성취기준 셀 안에 '※ 내용 체계표의 가치·태도 요소를 …' 같은
-            # 편집 주석이 함께 들어 있어, 대조 전에 떼어낸다.
-            got = re.sub(r'^\[[^\]]+\]\s*', '', rec['standard'])
-            # 성취기준 칸에 편집 주석(※ …)이나 탐구 활동 목록이 함께 들어 있는
-            # 문서가 있다(사회·과학). 대조 전에 떼어낸다.
-            got = normalize(re.split(r'※|<탐구\s*활동>|<실험\s*활동>|•', got)[0])
-            want = official[code]
-            a, b = got.replace(' ', ''), want.replace(' ', '')
-            if a != b:
-                # 완전 불일치는 추출 오류, 근소한 차이는 성취수준 문서와 고시 원문의
-                # 실제 표현 차이다. 둘을 구분해서 후자는 통과시키되 보고한다.
-                ratio = difflib.SequenceMatcher(None, a, b).ratio()
-                if (subject, code) in KNOWN_TEXT_DIFFS or ratio >= 0.9:
-                    near_miss.append((code, want, got, ratio))
-                else:
-                    mismatched.append((code, want, got, ratio))
-            if sorted(rec['levels']) not in (['A', 'B', 'C'], ['A', 'B', 'C', 'D', 'E']):
-                missing_levels.append((code, sorted(rec['levels'])))
 
-        not_found = [c for c in official if c not in extracted]
+            extracted, order = extract(pdf_path, None, set(owner))
 
-        # 교과에 따라 5단계(A~E)와 3단계(A~C)가 갈린다. 과목 안에서는 한 가지로
-        # 통일되어야 하며, 섞여 있으면 표를 잘못 읽은 것이므로 저장하지 않는다.
-        shapes = {''.join(sorted(extracted[c]['levels'])) for c in order}
-        scale = None
-        if len(shapes) == 1:
-            shape = next(iter(shapes))
-            scale = {'ABCDE': '5', 'ABC': '3'}.get(shape)
+            by_subject = {}
+            for code in order:
+                subj = owner.get(code)
+                if subj:
+                    by_subject.setdefault(subj, []).append(code)
 
-        print(f'  성취수준 단계             : {scale + "단계" if scale else f"판별 불가 {sorted(shapes)}"}')
-        print(f'  성취기준 원문 대조 불일치 : {len(mismatched)}')
-        print(f'  표현 차이(경미, 통과)     : {len(near_miss)}')
-        print(f'  수준 누락                : {len(missing_levels)}')
-        print(f'  데이터셋에 없는 코드      : {len(unknown)}')
-        print(f'  추출되지 않은 성취기준    : {len(not_found)}')
+            print(f'\n### {pdf_path.name}\n    발견한 과목: {list(by_subject) or "없음"}')
+            if not by_subject:
+                total_fail += 1
+                continue
 
-        for code, want, got, ratio in mismatched[:3]:
-            print(f'    [{code}] 유사도 {ratio:.2f}\n      공식: {want[:90]}\n      추출: {got[:90]}')
-        for code, want, got, ratio in near_miss:
-            print(f'    ~ [{code}] 유사도 {ratio:.3f} — 성취수준 문서의 표현이 고시 원문과 다름')
-            print(f'        고시: {want}')
-            print(f'        문서: {got}')
-        for code, lv in missing_levels[:3]:
-            print(f'    [{code}] 수준 {lv}')
-        if not_found[:5]:
-            print(f'    누락 코드: {not_found[:5]}')
+            for subj, codes in by_subject.items():
+                official = load_official(subj, level)
+                if not validate_and_store(subj, extracted, codes, official, bundle):
+                    total_fail += 1
+    else:
+        pairs = [(argv[i], Path(argv[i + 1])) for i in range(0, len(argv), 2)]
+        for subject, pdf_path in pairs:
+            if not pdf_path.exists():
+                print(f'!! 파일 없음: {pdf_path}')
+                total_fail += 1
+                continue
 
-        if mismatched or missing_levels or unknown or not_found or not scale:
-            total_fail += 1
-            if not scale:
-                print(f'    한 과목 안에 수준 구성이 섞여 있습니다: {sorted(shapes)}')
-            print('  => 검증 실패. 이 과목은 저장하지 않습니다.')
-            continue
+            official = load_official(subject, level)
+            if not official:
+                names = known_subjects(level)
+                close = [n for n in names if subject in n or n in subject][:5]
+                print(f'\n=== {subject} ===')
+                print(f'!! 교육과정 데이터에 없는 과목명입니다 ({level}).')
+                if close:
+                    print(f'   혹시 이건가요? {close}')
+                print(f'   전체 과목명은 data/curriculum-2022-{level}.json 에 있습니다.')
+                total_fail += 1
+                continue
 
-        bundle['subjects'][subject] = {
-            'scale': scale,
-            'standards': {code: extracted[code]['levels'] for code in order},
-        }
-        print('  => 검증 통과')
+            extracted, order = extract(pdf_path, subject, set(official))
+            if not validate_and_store(subject, extracted, order, official, bundle):
+                total_fail += 1
 
     bundle['source'] = (
         '교육부·한국교육과정평가원, 「2022 개정 교육과정에 따른 성취수준」 '
