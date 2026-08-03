@@ -260,6 +260,15 @@ def main():
 
         not_found = [c for c in official if c not in extracted]
 
+        # 교과에 따라 5단계(A~E)와 3단계(A~C)가 갈린다. 과목 안에서는 한 가지로
+        # 통일되어야 하며, 섞여 있으면 표를 잘못 읽은 것이므로 저장하지 않는다.
+        shapes = {''.join(sorted(extracted[c]['levels'])) for c in order}
+        scale = None
+        if len(shapes) == 1:
+            shape = next(iter(shapes))
+            scale = {'ABCDE': '5', 'ABC': '3'}.get(shape)
+
+        print(f'  성취수준 단계             : {scale + "단계" if scale else f"판별 불가 {sorted(shapes)}"}')
         print(f'  성취기준 원문 대조 불일치 : {len(mismatched)}')
         print(f'  표현 차이(경미, 통과)     : {len(near_miss)}')
         print(f'  수준 누락                : {len(missing_levels)}')
@@ -277,13 +286,16 @@ def main():
         if not_found[:5]:
             print(f'    누락 코드: {not_found[:5]}')
 
-        if mismatched or missing_levels or unknown or not_found:
+        if mismatched or missing_levels or unknown or not_found or not scale:
             total_fail += 1
+            if not scale:
+                print(f'    한 과목 안에 수준 구성이 섞여 있습니다: {sorted(shapes)}')
             print('  => 검증 실패. 이 과목은 저장하지 않습니다.')
             continue
 
         bundle['subjects'][subject] = {
-            code: extracted[code]['levels'] for code in order
+            'scale': scale,
+            'standards': {code: extracted[code]['levels'] for code in order},
         }
         print('  => 검증 통과')
 

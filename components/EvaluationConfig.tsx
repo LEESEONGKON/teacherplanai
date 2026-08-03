@@ -3,7 +3,7 @@ import { PlanData, GradeLevel, EvaluationPlanRow, PerformanceTask } from '../typ
 import { Plus, Trash2, AlertCircle, Sparkles, Upload, BookOpen, Check } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { extractEvaluationPlanFromFile, extractAchievementLevelsFromFile, createId } from '../services/geminiService';
-import { getLevelSubjects, loadAchievementLevels, aggregateLevels, extractStandardCode, LevelKey } from '../services/curriculumData';
+import { getLevelSubjectScales, loadAchievementLevels, aggregateLevels, extractStandardCode, LEVEL_KEYS, LevelKey, AchievementScale } from '../services/curriculumData';
 
 interface Props {
   data: PlanData;
@@ -56,19 +56,21 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
   const [levelFile, setLevelFile] = useState<File | null>(null);
   const [isExtractingLevels, setIsExtractingLevels] = useState(false);
 
-  // 내장 성취수준 데이터 지원 여부
-  const [builtInSubjects, setBuiltInSubjects] = useState<string[] | null>(null);
+  // 내장 성취수준 데이터: 과목명 -> 공식 단계(3/5)
+  const [builtInScales, setBuiltInScales] = useState<Record<string, AchievementScale> | null>(null);
   const [isApplyingBuiltIn, setIsApplyingBuiltIn] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    getLevelSubjects()
-      .then(list => { if (!cancelled) setBuiltInSubjects(list); })
-      .catch(err => { console.warn('성취수준 데이터 로드 실패', err); if (!cancelled) setBuiltInSubjects([]); });
+    getLevelSubjectScales()
+      .then(map => { if (!cancelled) setBuiltInScales(map); })
+      .catch(err => { console.warn('성취수준 데이터 로드 실패', err); if (!cancelled) setBuiltInScales({}); });
     return () => { cancelled = true; };
   }, []);
 
-  const builtInAvailable = !!builtInSubjects?.includes((data.subject || '').trim());
+  const officialScale = builtInScales?.[(data.subject || '').trim()];
+  const builtInAvailable = !!officialScale;
+  const scaleMismatch = builtInAvailable && officialScale !== data.achievementScale;
 
   // 이번 학기에 실제로 다루는 성취기준 = 교수학습 계획에 담긴 것.
   // 진도 순서를 유지한 채 중복만 제거한다(한 성취기준을 여러 차시에 나눠 적는 경우가 있다).
@@ -79,14 +81,20 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
   ));
 
   const handleApplyBuiltInLevels = async () => {
-    if (data.achievementScale !== '5') {
-      alert(
-        '내장된 성취수준 자료는 5단계(A~E) 기준입니다.\n\n' +
-        '현재 3단계(A/B/C)로 설정되어 있어 그대로 옮기면 수준의 의미가 달라집니다.\n' +
-        "위의 '성취수준 단계'를 5단계로 바꾼 뒤 다시 시도해주세요."
+    if (!officialScale) return;
+
+    // 단계는 교과별로 정해져 있다. 앱 설정이 다르면 임의로 맞추지 않고 확인을 받는다
+    // (5단계 자료를 3단계 칸에 옮기면 각 수준의 의미가 달라진다).
+    if (scaleMismatch) {
+      const ok = window.confirm(
+        `[${data.subject}]의 공식 성취수준은 ${officialScale}단계(${officialScale === '5' ? 'A~E' : 'A~C'})입니다.\n` +
+        `현재 평가 설정은 ${data.achievementScale}단계로 되어 있습니다.\n\n` +
+        `설정을 ${officialScale}단계로 바꾸고 채울까요?\n` +
+        `(단계를 그대로 두면 수준의 의미가 달라지므로 맞추는 것을 권장합니다)`
       );
-      return;
+      if (!ok) return;
     }
+
     if (planCodes.length === 0) {
       alert(
         "'3. 교수학습 계획'에 성취기준이 없습니다.\n\n" +
@@ -98,7 +106,8 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
     setIsApplyingBuiltIn(true);
     try {
       const store = await loadAchievementLevels();
-      const byCode = store.subjects[data.subject.trim()] || {};
+      const entry = store.subjects[data.subject.trim()];
+      const byCode = entry?.standards || {};
 
       const covered = planCodes.filter(c => byCode[c]);
       const uncovered = planCodes.filter(c => !byCode[c]);
@@ -107,18 +116,26 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
         return;
       }
 
-      const keys: LevelKey[] = ['A', 'B', 'C', 'D', 'E'];
+      const keys = LEVEL_KEYS[officialScale];
       const aggregated = aggregateLevels(byCode, covered, keys);
 
       const confirmMsg =
-        `교수학습 계획의 성취기준 ${covered.length}개에 대한 공식 성취수준을 수준별로 합쳐 아래 표를 채웁니다.\n` +
+        `교수학습 계획의 성취기준 ${covered.length}개에 대한 공식 성취수준을 ` +
+        `${officialScale}단계(${keys.join('/')})로 합쳐 아래 표를 채웁니다.\n` +
         (uncovered.length > 0 ? `\n(자료가 없는 성취기준 ${uncovered.length}개는 제외됩니다)\n` : '') +
         `\n기존에 입력된 성취수준은 덮어씁니다. 계속하시겠습니까?`;
       if (!window.confirm(confirmMsg)) return;
 
-      onChange(prev => ({ ...prev, achievementStandards: { ...prev.achievementStandards, ...aggregated } }));
+      onChange(prev => {
+        // 3단계 과목이면 쓰지 않는 D·E를 비운다. 남겨두면 이전 입력이 인쇄물에 섞인다.
+        const next = { ...prev.achievementStandards };
+        (['A', 'B', 'C', 'D', 'E'] as LevelKey[]).forEach(k => {
+          next[k] = keys.includes(k) ? aggregated[k] : '';
+        });
+        return { ...prev, achievementScale: officialScale, achievementStandards: next };
+      });
       alert(
-        `성취기준 ${covered.length}개의 공식 성취수준을 반영했습니다.\n` +
+        `성취기준 ${covered.length}개의 공식 성취수준을 ${officialScale}단계로 반영했습니다.\n` +
         `AI가 새로 쓴 문장이 아니라 문서 원문을 그대로 이어붙인 결과입니다.`
       );
     } catch (e: any) {
@@ -686,7 +703,7 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
            {builtInAvailable && (
              <div className="w-full bg-indigo-50 p-4 rounded-lg border border-indigo-200 mb-4">
                <p className="text-sm text-indigo-900 font-bold mb-1 flex items-center gap-2">
-                 <BookOpen size={16} /> 공식 성취수준이 내장된 과목입니다 ({data.subject})
+                 <BookOpen size={16} /> 공식 성취수준이 내장된 과목입니다 ({data.subject} · {officialScale}단계)
                </p>
                <p className="text-xs text-indigo-700 mb-3 leading-relaxed">
                  교수학습 계획에 담긴 성취기준 <strong>{planCodes.length}개</strong>의 공식 성취수준을
@@ -695,6 +712,12 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
                  <strong className="text-indigo-800">AI가 문장을 만들지 않습니다.</strong> 문서 원문을 그대로 사용하며,
                  이는 공식 문서가 '영역별 성취수준'을 구성하는 방식과 같습니다.
                </p>
+               {scaleMismatch && (
+                 <p className="text-xs bg-amber-100 border border-amber-300 text-amber-900 rounded px-2 py-1.5 mb-3">
+                   ⚠️ 이 교과의 공식 단계는 <strong>{officialScale}단계</strong>인데 현재 설정은
+                   <strong> {data.achievementScale}단계</strong>입니다. 채우기를 누르면 {officialScale}단계로 맞출지 확인합니다.
+                 </p>
+               )}
                <button
                  onClick={handleApplyBuiltInLevels}
                  disabled={isApplyingBuiltIn}

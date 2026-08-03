@@ -62,11 +62,28 @@ export const extractStandardCode = (text: string): string | null => {
 export type LevelKey = 'A' | 'B' | 'C' | 'D' | 'E';
 export type StandardLevels = Partial<Record<LevelKey, string>>;
 
+/**
+ * 성취수준 단계는 교과마다 다르다. 공통·일반선택 과목은 대체로 5단계(A~E),
+ * 예체능 교과와 고교 진로·융합선택 과목은 3단계(A~C)를 쓴다.
+ * 따라서 과목마다 실제 단계를 데이터에 함께 담는다.
+ */
+export type AchievementScale = '3' | '5';
+
+export const LEVEL_KEYS: Record<AchievementScale, LevelKey[]> = {
+  '3': ['A', 'B', 'C'],
+  '5': ['A', 'B', 'C', 'D', 'E'],
+};
+
+export interface SubjectLevels {
+  scale: AchievementScale;
+  standards: Record<string, StandardLevels>;
+}
+
 export interface AchievementLevelData {
   curriculum: string;
   schoolLevel: SchoolLevel;
   source: string;
-  subjects: Record<string, Record<string, StandardLevels>>;
+  subjects: Record<string, SubjectLevels>;
 }
 
 let levelCache: AchievementLevelData | null = null;
@@ -78,10 +95,12 @@ export const loadAchievementLevels = async (): Promise<AchievementLevelData> => 
   return levelCache;
 };
 
-/** 성취수준이 수록된 과목명 목록 (UI에서 안내용으로 쓴다). */
-export const getLevelSubjects = async (): Promise<string[]> => {
+/** 성취수준이 수록된 과목명 → 공식 단계. UI 안내와 단계 검사에 쓴다. */
+export const getLevelSubjectScales = async (): Promise<Record<string, AchievementScale>> => {
   const data = await loadAchievementLevels();
-  return Object.keys(data.subjects);
+  const out: Record<string, AchievementScale> = {};
+  for (const [name, entry] of Object.entries(data.subjects)) out[name] = entry.scale;
+  return out;
 };
 
 /**
