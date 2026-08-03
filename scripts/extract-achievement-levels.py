@@ -7,9 +7,14 @@ NCIC 「2022 개정 교육과정에 따른 성취수준」 PDF에서 성취기�
 줄바꿈 결합 규칙이 잘못되면 조용히 통과하지 않고 드러난다.
 
 사용법:
-    python scripts/extract-achievement-levels.py <과목명> <PDF경로> [...]
+    python scripts/extract-achievement-levels.py [middle|high] <과목명> <PDF경로> [<과목명> <PDF경로> ...]
+
+학교급을 생략하면 middle 로 본다. 과목명은 data/curriculum-2022-<학교급>.json 의
+과목명과 정확히 같아야 하며, 다르면 비슷한 이름을 알려주고 중단한다.
+
 예:
     python scripts/extract-achievement-levels.py 역사 "C:/.../성취수준(역사).pdf"
+    python scripts/extract-achievement-levels.py high 통합사회1 "C:/.../성취수준(통합사회1).pdf"
 """
 import difflib
 import json
@@ -180,22 +185,31 @@ def extract(pdf_path: Path):
     return result, order
 
 
-def load_official(subject: str):
+def load_official(subject: str, level: str):
     """앱에 내장된 공식 성취기준 (검증 기준값)."""
-    data = json.loads((REPO / 'data' / 'curriculum-2022-middle.json').read_text(encoding='utf-8'))
+    data = json.loads((REPO / 'data' / f'curriculum-2022-{level}.json').read_text(encoding='utf-8'))
     for s in data['subjects']:
         if s['name'] == subject:
             return {st['c']: normalize(st['t']) for st in s['standards']}
     return {}
 
 
+def known_subjects(level: str):
+    data = json.loads((REPO / 'data' / f'curriculum-2022-{level}.json').read_text(encoding='utf-8'))
+    return [s['name'] for s in data['subjects']]
+
+
 def main():
-    if len(sys.argv) < 3 or len(sys.argv) % 2 == 0:
+    argv = sys.argv[1:]
+    level = 'middle'
+    if argv and argv[0] in ('middle', 'high'):
+        level = argv.pop(0)
+    if len(argv) < 2 or len(argv) % 2 == 1:
         print(__doc__)
         sys.exit(1)
 
-    pairs = [(sys.argv[i], Path(sys.argv[i + 1])) for i in range(1, len(sys.argv), 2)]
-    out_path = REPO / 'data' / 'achievement-levels-2022-middle.json'
+    pairs = [(argv[i], Path(argv[i + 1])) for i in range(0, len(argv), 2)]
+    out_path = REPO / 'data' / f'achievement-levels-2022-{level}.json'
     bundle = json.loads(out_path.read_text(encoding='utf-8')) if out_path.exists() else {}
     bundle.setdefault('source', '')
     bundle.setdefault('subjects', {})
@@ -208,8 +222,19 @@ def main():
             total_fail += 1
             continue
 
+        official = load_official(subject, level)
+        if not official:
+            names = known_subjects(level)
+            close = [n for n in names if subject in n or n in subject][:5]
+            print(f'\n=== {subject} ===')
+            print(f'!! 교육과정 데이터에 없는 과목명입니다 ({level}).')
+            if close:
+                print(f'   혹시 이건가요? {close}')
+            print(f'   전체 과목명은 data/curriculum-2022-{level}.json 에 있습니다.')
+            total_fail += 1
+            continue
+
         extracted, order = extract(pdf_path)
-        official = load_official(subject)
         print(f'\n=== {subject} ===  추출 {len(extracted)}개 / 공식 {len(official)}개')
 
         mismatched, near_miss, missing_levels, unknown = [], [], [], []
@@ -267,7 +292,7 @@ def main():
         '(국가교육과정정보센터 NCIC 공개). 성취기준별 성취수준 원문.'
     )
     bundle['curriculum'] = '2022'
-    bundle['schoolLevel'] = 'middle'
+    bundle['schoolLevel'] = level
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding='utf-8')
