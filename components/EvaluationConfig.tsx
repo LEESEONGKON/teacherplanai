@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { PlanData, GradeLevel, EvaluationPlanRow, PerformanceTask } from '../types';
-import { Plus, Trash2, AlertCircle, Sparkles, Upload } from 'lucide-react';
+import { Plus, Trash2, AlertCircle, Sparkles, Upload, BookOpen, Check } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { extractEvaluationPlanFromFile, extractAchievementLevelsFromFile, createId } from '../services/geminiService';
+import { getLevelSubjects, loadAchievementLevels, aggregateLevels, extractStandardCode, LevelKey } from '../services/curriculumData';
 
 interface Props {
   data: PlanData;
@@ -54,6 +55,75 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
   // 성취수준(A~E) 추출용 문서
   const [levelFile, setLevelFile] = useState<File | null>(null);
   const [isExtractingLevels, setIsExtractingLevels] = useState(false);
+
+  // 내장 성취수준 데이터 지원 여부
+  const [builtInSubjects, setBuiltInSubjects] = useState<string[] | null>(null);
+  const [isApplyingBuiltIn, setIsApplyingBuiltIn] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getLevelSubjects()
+      .then(list => { if (!cancelled) setBuiltInSubjects(list); })
+      .catch(err => { console.warn('성취수준 데이터 로드 실패', err); if (!cancelled) setBuiltInSubjects([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const builtInAvailable = !!builtInSubjects?.includes((data.subject || '').trim());
+
+  const planCodes = data.teachingPlans
+    .map(p => extractStandardCode(p.standard))
+    .filter((c): c is string => !!c);
+
+  const handleApplyBuiltInLevels = async () => {
+    if (data.achievementScale !== '5') {
+      alert(
+        '내장된 성취수준 자료는 5단계(A~E) 기준입니다.\n\n' +
+        '현재 3단계(A/B/C)로 설정되어 있어 그대로 옮기면 수준의 의미가 달라집니다.\n' +
+        "위의 '성취수준 단계'를 5단계로 바꾼 뒤 다시 시도해주세요."
+      );
+      return;
+    }
+    if (planCodes.length === 0) {
+      alert(
+        "'3. 교수학습 계획'에 성취기준이 없습니다.\n\n" +
+        "'2. 성취기준 선택' 탭에서 이번 학기에 다룰 성취기준을 먼저 추가해주세요."
+      );
+      return;
+    }
+
+    setIsApplyingBuiltIn(true);
+    try {
+      const store = await loadAchievementLevels();
+      const byCode = store.subjects[data.subject.trim()] || {};
+
+      const covered = planCodes.filter(c => byCode[c]);
+      const uncovered = planCodes.filter(c => !byCode[c]);
+      if (covered.length === 0) {
+        alert('교수학습 계획의 성취기준에 해당하는 성취수준 자료를 찾지 못했습니다.');
+        return;
+      }
+
+      const keys: LevelKey[] = ['A', 'B', 'C', 'D', 'E'];
+      const aggregated = aggregateLevels(byCode, covered, keys);
+
+      const confirmMsg =
+        `교수학습 계획의 성취기준 ${covered.length}개에 대한 공식 성취수준을 수준별로 합쳐 아래 표를 채웁니다.\n` +
+        (uncovered.length > 0 ? `\n(자료가 없는 성취기준 ${uncovered.length}개는 제외됩니다)\n` : '') +
+        `\n기존에 입력된 성취수준은 덮어씁니다. 계속하시겠습니까?`;
+      if (!window.confirm(confirmMsg)) return;
+
+      onChange(prev => ({ ...prev, achievementStandards: { ...prev.achievementStandards, ...aggregated } }));
+      alert(
+        `성취기준 ${covered.length}개의 공식 성취수준을 반영했습니다.\n` +
+        `AI가 새로 쓴 문장이 아니라 문서 원문을 그대로 이어붙인 결과입니다.`
+      );
+    } catch (e: any) {
+      console.error(e);
+      alert(`성취수준 데이터를 불러오지 못했습니다.\n${e?.message || e}`);
+    } finally {
+      setIsApplyingBuiltIn(false);
+    }
+  };
 
   const handleExtractLevels = async () => {
     if (!levelFile) return;
@@ -608,6 +678,33 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
         <div className="mb-8">
           <h2 className="text-xl font-bold text-gray-800 mb-4">3. 학기단위 성취수준</h2>
           
+           {/* 내장 공식 성취수준으로 채우기 (해당 과목 자료가 있을 때만 노출) */}
+           {builtInAvailable && (
+             <div className="w-full bg-indigo-50 p-4 rounded-lg border border-indigo-200 mb-4">
+               <p className="text-sm text-indigo-900 font-bold mb-1 flex items-center gap-2">
+                 <BookOpen size={16} /> 공식 성취수준이 내장된 과목입니다 ({data.subject})
+               </p>
+               <p className="text-xs text-indigo-700 mb-3 leading-relaxed">
+                 교수학습 계획에 담긴 성취기준 <strong>{planCodes.length}개</strong>의 공식 성취수준을
+                 수준별로 이어붙여 아래 표를 채웁니다.
+                 <br />
+                 <strong className="text-indigo-800">AI가 문장을 만들지 않습니다.</strong> 문서 원문을 그대로 사용하며,
+                 이는 공식 문서가 '영역별 성취수준'을 구성하는 방식과 같습니다.
+               </p>
+               <button
+                 onClick={handleApplyBuiltInLevels}
+                 disabled={isApplyingBuiltIn}
+                 className={`px-4 py-2 rounded text-xs font-bold text-white transition-colors flex items-center gap-2 ${
+                   isApplyingBuiltIn ? 'bg-gray-300 cursor-wait' : 'bg-indigo-600 hover:bg-indigo-700 shadow-sm'
+                 }`}
+               >
+                 {isApplyingBuiltIn
+                   ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> 적용 중...</>
+                   : <><Check size={14} /> 교수학습 계획의 성취기준으로 채우기</>}
+               </button>
+             </div>
+           )}
+
            {/* 성취수준 문서에서 자동 채우기 */}
            <div className="w-full bg-green-50 p-4 rounded-lg border border-green-100 mb-6">
              <p className="text-sm text-green-900 font-bold mb-1 flex items-center gap-2">
