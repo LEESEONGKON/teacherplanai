@@ -28,8 +28,25 @@ import pdfplumber
 REPO = Path(__file__).resolve().parent.parent
 # 역사형 [9역01-01] 과 사회형 [9사(일사)01-01] 을 모두 받는다.
 # 사회는 일반사회/지리가 한 과목에 묶여 있어 괄호 구분자가 들어간다.
-CODE_RE = re.compile(r'\[9[가-힣]+(?:\s*\(\s*[가-힣]+\s*\))?\s*\d{2}\s*-\s*\d{2}\]')
-LEVEL_RE = re.compile(r'^[ABCDE]$')
+CODE_RE = re.compile(r'\[\d+[가-힣]+(?:\s*\(\s*[가-힣]+\s*\))?\s*\d{2}\s*-\s*\d{2}\]')
+# 수준 칸에는 글자가 하나만 오는 게 보통이지만, 인접 수준이 서술을 공유하면
+# 'A/B'처럼 두 글자를 한 칸에 겹쳐 적는 문서가 있다(영어).
+LEVEL_CELL_RE = re.compile(r'^[ABCDE\s]+$')
+
+# 성취수준 문서에 실린 코드 오타. 문서를 직접 확인하고 등재한다.
+# 성취기준 원문 대조가 함께 돌기 때문에, 잘못 고치면 검증에서 걸린다.
+CODE_FIXES = {
+    # 초등 접두사 '6국'으로 잘못 적혀 있으나 본문은 [9국05-07]의 성취기준이다.
+    ('국어', '[6국05-07]'): '[9국05-07]',
+}
+
+# 성취수준 문서의 성취기준 문구가 고시 원문과 크게 다른 사례.
+# 추출 오류가 아니라 문서 자체가 다르게 적고 있음을 원문에서 확인한 항목만 등재한다.
+# (등재해도 성취수준 진술은 문서 그대로 저장된다)
+KNOWN_TEXT_DIFFS = {
+    # 문서는 '의복 디자인의 요소를 적용한 개성 있는 옷차림을 통해 …' 로 확장 서술.
+    ('기술·가정', '[9기가01-04]'),
+}
 
 
 def normalize(text: str) -> str:
@@ -74,6 +91,30 @@ def table_row_bands(table):
     return [(merged[i], merged[i + 1]) for i in range(len(merged) - 1)]
 
 
+def column_bands(page, x0, x1, top, bottom):
+    """어떤 열의 가로 괘선만 모아 그 열의 칸 경계를 구한다.
+
+    수준이 인접해 서술이 같으면 진술 칸을 병합해 적는 문서가 있다
+    (수학: A·B 한 칸, C·D 한 칸, E 한 칸 = 5수준에 진술 3개).
+    이때 진술 칸의 경계는 수준 칸의 경계와 다르므로, 열마다 따로 읽어야
+    병합된 진술을 해당 수준 모두에 올바로 배분할 수 있다.
+    """
+    ys = []
+    for e in page.horizontal_edges:
+        # 이 열을 가로지르는 괘선만 인정한다.
+        if e['x0'] <= x0 + 2 and e['x1'] >= x1 - 2 and top - 2 <= e['top'] <= bottom + 2:
+            ys.append(round(e['top'], 0))
+    merged = cluster(ys)
+    return [(merged[i], merged[i + 1]) for i in range(len(merged) - 1)]
+
+
+def band_containing(bands, y):
+    for lo, hi in bands:
+        if lo - 1 <= y <= hi + 1:
+            return (lo, hi)
+    return None
+
+
 def cell_text(words, x0, x1, top, bottom):
     """열/행 범위 안의 단어를 줄 단위로 묶고 공백으로 잇는다."""
     inside = [w for w in words
@@ -103,7 +144,7 @@ def cell_text(words, x0, x1, top, bottom):
     return normalize(' '.join(out))
 
 
-def extract(pdf_path: Path):
+def extract(pdf_path: Path, subject: str, official_codes):
     """{코드: {'standard': 원문, 'levels': {A..E: 진술}}} 를 문서 순서대로 반환."""
     result = {}
     order = []
@@ -115,8 +156,15 @@ def extract(pdf_path: Path):
             text = page.extract_text() or ''
 
             # 'Ⅲ. 성취수준 > 1. 성취기준별 성취수준' 구간만 처리한다.
+            # 앞쪽 '성취수준 개발의 이해' 장에는 다른 학교급 코드([12진로01-03] 등)를
+            # 예시로 든 페이지가 있어, 이 과목의 실제 성취기준 코드가 있는 페이지에서만
+            # 구간을 연다.
             if not in_section:
-                if CODE_RE.search(text) and '성취기준별 성취수준' in text:
+                page_codes = {CODE_FIXES.get((subject, re.sub(r'\s+', '', c)), re.sub(r'\s+', '', c))
+                              for c in CODE_RE.findall(text)}
+                # 예시 페이지는 성취기준을 보통 하나만 인용하므로, 실제 자료 페이지의
+                # 기준으로 '이 과목의 성취기준이 둘 이상'을 요구한다.
+                if '성취기준별 성취수준' in text and len(page_codes & official_codes) >= 2:
                     in_section = True
                 else:
                     continue
@@ -134,18 +182,22 @@ def extract(pdf_path: Path):
                 std_x = (bounds[0], bounds[1])
                 lvl_x = (bounds[1], bounds[2])
                 desc_x = (bounds[2], bounds[-1])
+                desc_bands = column_bands(page, *desc_x, table.bbox[1], table.bbox[3])
 
                 # 수준 글자가 들어 있는 행만 남긴다.
                 leveled = []
                 for top, bottom in table_row_bands(table):
-                    level = cell_text(words, *lvl_x, top, bottom)
-                    if LEVEL_RE.match(level):
-                        leveled.append((level, top, bottom))
+                    cell = cell_text(words, *lvl_x, top, bottom)
+                    if not cell or not LEVEL_CELL_RE.match(cell):
+                        continue
+                    letters = [ch for ch in cell if ch in 'ABCDE']
+                    if letters:
+                        leveled.append((letters, top, bottom))
 
                 # 'A'가 나올 때마다 새 성취기준 묶음이 시작된다.
                 groups = []
                 for entry in leveled:
-                    if entry[0] == 'A' or not groups:
+                    if 'A' in entry[0] or not groups:
                         groups.append([entry])
                     else:
                         groups[-1].append(entry)
@@ -161,6 +213,7 @@ def extract(pdf_path: Path):
                     if m:
                         # 줄바꿈/자간 때문에 코드 안에 공백이 끼어들 수 있어 제거한다.
                         code = re.sub(r'\s+', '', m.group(0))
+                        code = CODE_FIXES.get((subject, code), code)
                         current = code
                         if code not in result:
                             result[code] = {'standard': std_cell, 'levels': {}}
@@ -174,13 +227,20 @@ def extract(pdf_path: Path):
                     if not current:
                         continue
 
-                    for level, top, bottom in group:
-                        desc = cell_text(words, *desc_x, top, bottom)
+                    for letters, top, bottom in group:
+                        # 진술 칸은 여러 수준에 걸쳐 병합될 수 있으므로, 수준 행이 아니라
+                        # 진술 열 자신의 칸 경계로 읽는다. 병합된 칸은 그 안에 든 수준들이
+                        # 같은 진술을 공유한다.
+                        band = band_containing(desc_bands, (top + bottom) / 2)
+                        desc = cell_text(words, *desc_x, *band) if band else \
+                            cell_text(words, *desc_x, top, bottom)
                         if not desc:
                             continue
-                        prev = result[current]['levels'].get(level, '')
-                        # 같은 수준이 페이지를 넘어 이어지는 경우를 대비해 이어붙인다.
-                        result[current]['levels'][level] = normalize(f'{prev} {desc}') if prev else desc
+                        # 한 칸을 공유하는 수준들에는 같은 진술이 들어간다.
+                        for level in letters:
+                            prev = result[current]['levels'].get(level, '')
+                            # 같은 수준이 페이지를 넘어 이어지는 경우를 대비해 이어붙인다.
+                            result[current]['levels'][level] = normalize(f'{prev} {desc}') if prev else desc
 
     return result, order
 
@@ -234,7 +294,7 @@ def main():
             total_fail += 1
             continue
 
-        extracted, order = extract(pdf_path)
+        extracted, order = extract(pdf_path, subject, set(official))
         print(f'\n=== {subject} ===  추출 {len(extracted)}개 / 공식 {len(official)}개')
 
         mismatched, near_miss, missing_levels, unknown = [], [], [], []
@@ -247,14 +307,19 @@ def main():
             # 사회 일부 행은 성취기준 셀 안에 '※ 내용 체계표의 가치·태도 요소를 …' 같은
             # 편집 주석이 함께 들어 있어, 대조 전에 떼어낸다.
             got = re.sub(r'^\[[^\]]+\]\s*', '', rec['standard'])
-            got = normalize(re.split(r'※', got)[0])
+            # 성취기준 칸에 편집 주석(※ …)이나 탐구 활동 목록이 함께 들어 있는
+            # 문서가 있다(사회·과학). 대조 전에 떼어낸다.
+            got = normalize(re.split(r'※|<탐구\s*활동>|<실험\s*활동>|•', got)[0])
             want = official[code]
             a, b = got.replace(' ', ''), want.replace(' ', '')
             if a != b:
                 # 완전 불일치는 추출 오류, 근소한 차이는 성취수준 문서와 고시 원문의
                 # 실제 표현 차이다. 둘을 구분해서 후자는 통과시키되 보고한다.
                 ratio = difflib.SequenceMatcher(None, a, b).ratio()
-                (near_miss if ratio >= 0.9 else mismatched).append((code, want, got, ratio))
+                if (subject, code) in KNOWN_TEXT_DIFFS or ratio >= 0.9:
+                    near_miss.append((code, want, got, ratio))
+                else:
+                    mismatched.append((code, want, got, ratio))
             if sorted(rec['levels']) not in (['A', 'B', 'C'], ['A', 'B', 'C', 'D', 'E']):
                 missing_levels.append((code, sorted(rec['levels'])))
 
