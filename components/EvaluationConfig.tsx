@@ -70,9 +70,13 @@ const EvaluationConfig: React.FC<Props> = ({ data, onChange }) => {
 
   const builtInAvailable = !!builtInSubjects?.includes((data.subject || '').trim());
 
-  const planCodes = data.teachingPlans
-    .map(p => extractStandardCode(p.standard))
-    .filter((c): c is string => !!c);
+  // 이번 학기에 실제로 다루는 성취기준 = 교수학습 계획에 담긴 것.
+  // 진도 순서를 유지한 채 중복만 제거한다(한 성취기준을 여러 차시에 나눠 적는 경우가 있다).
+  const planCodes = Array.from(new Set(
+    data.teachingPlans
+      .map(p => extractStandardCode(p.standard))
+      .filter((c): c is string => !!c)
+  ));
 
   const handleApplyBuiltInLevels = async () => {
     if (data.achievementScale !== '5') {
