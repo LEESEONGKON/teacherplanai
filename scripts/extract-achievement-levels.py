@@ -79,18 +79,56 @@ def cluster(values, tol=3):
     return merged
 
 
-def table_columns(table):
+def table_columns(table, page=None):
     """표 자신의 셀 좌표에서 열 경계를 구한다.
 
     한 페이지에 x 오프셋이 다른 표가 두 개 놓이는 경우가 있어(사회 p30),
     페이지 전체 괘선으로 열을 나누면 경계가 뒤섞인다. 표 단위로 계산해야 한다.
+
+    앞 페이지에서 이어지는 표는 바깥 테두리를 그리지 않고 수준 칸 둘레만
+    괘선을 두는 문서가 있다(환경 p35·p36). 그러면 괘선에서 얻는 경계가
+    수준 칸의 좌·우 둘뿐이라 성취기준/진술 열을 가를 수 없다. 이때는 같은
+    페이지의 온전한 표에서 좌·우 끝을 빌려 네 경계를 완성한다.
     """
     xs = []
     for cell in table.cells:
         if cell:
             xs.extend([round(cell[0], 0), round(cell[2], 0)])
     merged = cluster(xs)
-    return merged if len(merged) >= 4 else None
+    if len(merged) >= 4:
+        return merged
+
+    if page is None or len(merged) != 2:
+        return None
+
+    # 가운데 좁은 칸이 정말 수준 칸인지 확인한다. 아니면 손대지 않는다.
+    lvl_x0, lvl_x1 = merged
+    if not 15 <= lvl_x1 - lvl_x0 <= 45:
+        return None
+    letters = [w for w in page.extract_words()
+               if len(w['text']) == 1 and w['text'] in 'ABCDE'
+               and w['x0'] >= lvl_x0 - 1 and w['x1'] <= lvl_x1 + 1
+               and w['top'] >= table.bbox[1] - 1 and w['bottom'] <= table.bbox[3] + 1]
+    if len(letters) < 2:
+        return None
+
+    outer = page_content_bounds(page)
+    if not outer or not (outer[0] < lvl_x0 and lvl_x1 < outer[1]):
+        return None
+    return [outer[0], lvl_x0, lvl_x1, outer[1]]
+
+
+def page_content_bounds(page):
+    """같은 페이지의 온전한 표에서 본문 열의 좌·우 끝을 구한다."""
+    xs = []
+    for t in page.find_tables():
+        cell_xs = [round(c[0], 0) for c in t.cells if c] + [round(c[2], 0) for c in t.cells if c]
+        if len(cluster(cell_xs)) >= 4:
+            xs.extend([min(cell_xs), max(cell_xs)])
+    if not xs:
+        return None
+    left, right = min(xs), max(xs)
+    return (left, right) if right - left > 200 else None
 
 
 def table_row_bands(table):
@@ -160,6 +198,7 @@ def extract(pdf_path: Path, subject: str, official_codes):
     result = {}
     order = []
     current = None
+    last_level = None
     in_section = False
 
     with pdfplumber.open(pdf_path) as pdf:
@@ -179,15 +218,26 @@ def extract(pdf_path: Path, subject: str, official_codes):
                     in_section = True
                 else:
                     continue
-            # '2. 영역별 성취수준' 이 시작되면 종료
-            if '영역별 성취수준' in text and not CODE_RE.search(text):
-                break
-
             words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
 
+            # '2. 영역별 성취수준' 이 시작되면 종료한다. 다만 마지막 성취기준이
+            # 그 제목과 같은 페이지에서 끝나는 문서가 있어(환경 p37), 페이지를
+            # 통째로 버리면 그 성취기준의 뒷부분을 잃는다. 제목 위쪽 표까지만
+            # 처리하고 종료한다.
+            y_limit = None
+            if '영역별 성취수준' in text and not CODE_RE.search(text):
+                heads = [w['top'] for w in words if '영역별' in w['text']]
+                y_limit = min(heads) if heads else 0
+                last_page = True
+            else:
+                last_page = False
+
             tables = sorted(page.find_tables(), key=lambda t: t.bbox[1])
+            if y_limit is not None:
+                tables = [t for t in tables if t.bbox[3] <= y_limit]
+
             for table in tables:
-                bounds = table_columns(table)
+                bounds = table_columns(table, page)
                 if not bounds:
                     continue
                 std_x = (bounds[0], bounds[1])
@@ -204,6 +254,25 @@ def extract(pdf_path: Path, subject: str, official_codes):
                     letters = [ch for ch in cell if ch in 'ABCDE']
                     if letters:
                         leveled.append((letters, top, bottom))
+
+                # 진술이 페이지를 넘어가면, 이어지는 페이지의 첫 수준 행보다 위에
+                # 수준 글자 없는 나머지 문장이 남는다. 그 행은 수준 글자가 없어서
+                # 위 목록에 잡히지 않으므로, 여기서 직전 수준에 이어 붙인다.
+                if current and last_level:
+                    cont_bottom = leveled[0][1] if leveled else table.bbox[3]
+                    tail = cell_text(words, *desc_x, table.bbox[1], cont_bottom)
+                    tail = tail.replace('성취기준별 성취수준', '').strip()
+                    if tail:
+                        prev = result[current]['levels'].get(last_level, '')
+                        result[current]['levels'][last_level] = normalize(f'{prev} {tail}') if prev else tail
+
+                    # 성취기준 칸도 같은 자리에서 잘리므로 함께 이어 붙인다.
+                    std_tail = cell_text(words, *std_x, table.bbox[1], cont_bottom)
+                    std_tail = std_tail.replace('성취기준', '').strip()
+                    if std_tail and not CODE_RE.search(std_tail):
+                        result[current]['standard'] = normalize(
+                            f"{result[current]['standard']} {std_tail}"
+                        )
 
                 # 'A'가 나올 때마다 새 성취기준 묶음이 시작된다.
                 groups = []
@@ -252,6 +321,10 @@ def extract(pdf_path: Path, subject: str, official_codes):
                             prev = result[current]['levels'].get(level, '')
                             # 같은 수준이 페이지를 넘어 이어지는 경우를 대비해 이어붙인다.
                             result[current]['levels'][level] = normalize(f'{prev} {desc}') if prev else desc
+                            last_level = level
+
+            if last_page:
+                break
 
     return result, order
 
@@ -284,7 +357,7 @@ def validate_and_store(subject, extracted, order, official, bundle):
     """한 과목의 추출 결과를 검증하고, 통과한 경우에만 번들에 담는다."""
     print(f'\n=== {subject} ===  추출 {len(order)}개 / 공식 {len(official)}개')
 
-    mismatched, near_miss, missing_levels, unknown = [], [], [], []
+    mismatched, near_miss, missing_levels, unknown, truncated = [], [], [], [], []
     for code in order:
         rec = extracted[code]
         if code not in official:
@@ -310,6 +383,12 @@ def validate_and_store(subject, extracted, order, official, bundle):
         if sorted(rec['levels']) not in (['A', 'B', 'C'], ['A', 'B', 'C', 'D', 'E']):
             missing_levels.append((code, sorted(rec['levels'])))
 
+        # 진술은 반드시 완결된 문장으로 끝난다. 페이지 경계에서 뒷부분을 놓치면
+        # '… 지속가능한 사회로' 처럼 중간에서 끊기므로, 그 상태로 저장되지 않게 막는다.
+        for lv, txt in sorted(rec['levels'].items()):
+            if not re.search(r'(다|음|함|임)\s*\.?$', txt.strip()):
+                truncated.append((code, lv, txt))
+
     known_gap = [c for c in official if c not in extracted and (subject, c) in KNOWN_MISSING]
     not_found = [c for c in official if c not in extracted and (subject, c) not in KNOWN_MISSING]
 
@@ -327,6 +406,7 @@ def validate_and_store(subject, extracted, order, official, bundle):
     print(f'  수준 누락                : {len(missing_levels)}')
     print(f'  데이터셋에 없는 코드      : {len(unknown)}')
     print(f'  추출되지 않은 성취기준    : {len(not_found)}')
+    print(f'  진술 잘림                : {len(truncated)}')
     if known_gap:
         print(f'  문서 미수록(확인됨)       : {len(known_gap)}  {known_gap}')
 
@@ -341,7 +421,10 @@ def validate_and_store(subject, extracted, order, official, bundle):
     if not_found[:5]:
         print(f'    누락 코드: {not_found[:5]}')
 
-    if mismatched or missing_levels or unknown or not_found or not scale:
+    for code, lv, txt in truncated[:3]:
+        print(f'    [{code}] {lv} 진술이 중간에서 끊김: …{txt[-42:]}')
+
+    if mismatched or missing_levels or unknown or not_found or truncated or not scale:
         if not scale:
             print(f'    한 과목 안에 수준 구성이 섞여 있습니다: {sorted(shapes)}')
         print('  => 검증 실패. 이 과목은 저장하지 않습니다.')
