@@ -26,6 +26,34 @@ body {
   }
 }
 
+/* 한글 붙여넣기용 사본.
+   textarea 의 값은 DOM 텍스트가 아니라 자바스크립트 속성이라, 편집용 표를 그대로
+   복사하면 칸이 비어서 붙습니다. 그래서 순수 텍스트로 된 표를 따로 그려 두고
+   그쪽을 복사합니다. display:none 은 선택·복사가 되지 않으므로 화면 밖에 둡니다. */
+.copy-source {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  width: 1100px;
+}
+.copy-source table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.copy-source th,
+.copy-source td {
+  border: 1px solid #000;
+  padding: 4px 6px;
+  font-size: 11px;
+  vertical-align: top;
+  white-space: pre-wrap;
+}
+.copy-source th {
+  background: #eee;
+  text-align: center;
+  font-weight: bold;
+}
+
 /* Horizontal tab strip in the header hides its scrollbar */
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
