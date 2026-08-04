@@ -6,7 +6,8 @@ import PlanCard from './PlanCard';
 import WorksheetCard from './WorksheetCard';
 import LevelsCard from './LevelsCard';
 import RubricCard from './RubricCard';
-import { ComposeState, INITIAL_COMPOSE, PlanRow } from './types';
+import UnassessedCard from './UnassessedCard';
+import { ComposeState, INITIAL_COMPOSE } from './types';
 
 const DRAFT_KEY = 'TEACHER_COMPOSE_DRAFT_V1';
 const API_KEY = 'TEACHER_PLAN_API_KEY';
@@ -16,11 +17,12 @@ const normalize = (parsed: any): ComposeState => ({
   ...parsed,
   rows: Array.isArray(parsed?.rows) ? parsed.rows : [],
   tasks: Array.isArray(parsed?.tasks) ? parsed.tasks : [],
+  unassessed: Array.isArray(parsed?.unassessed) ? parsed.unassessed : [],
   levels: { ...INITIAL_COMPOSE.levels, ...(parsed?.levels || {}) },
 });
 
 const hasContent = (s: ComposeState) =>
-  !!s.subject || s.rows.length > 0 || s.tasks.length > 0 ||
+  !!s.subject || s.rows.length > 0 || s.tasks.length > 0 || s.unassessed.length > 0 ||
   Object.values(s.levels).some(v => !!v);
 
 const loadDraft = (): ComposeState | null => {
@@ -155,7 +157,9 @@ const ComposeApp: React.FC = () => {
         <SubjectBar
           schoolLevel={state.schoolLevel}
           subject={state.subject}
-          onChange={next => patch({ ...next, rows: next.subject !== state.subject ? [] : state.rows })}
+          onChange={next => patch(next.subject !== state.subject
+            ? { ...next, rows: [], tasks: [], unassessed: [], levels: { ...INITIAL_COMPOSE.levels }, levelScale: null }
+            : next)}
           onCurriculum={setCurriculum}
         />
 
@@ -182,6 +186,14 @@ const ComposeApp: React.FC = () => {
           scale={state.levelScale}
           tasks={state.tasks}
           onChange={tasks => patch({ tasks })}
+        />
+
+        <UnassessedCard
+          subject={state.subject}
+          rows={state.rows}
+          scale={state.levelScale}
+          items={state.unassessed}
+          onChange={unassessed => patch({ unassessed })}
         />
 
         <footer className="text-[11px] text-gray-400 leading-relaxed pt-2 pb-8">

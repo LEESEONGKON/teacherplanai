@@ -30,8 +30,10 @@ body {
    textarea 의 값은 DOM 텍스트가 아니라 자바스크립트 속성이라, 편집용 표를 그대로
    복사하면 칸이 비어서 붙습니다. 그래서 순수 텍스트로 된 표를 따로 그려 두고
    그쪽을 복사합니다. display:none 은 선택·복사가 되지 않으므로 화면 밖에 둡니다. */
+/* fixed 로 두어 뷰포트 기준 위치를 유지한다. absolute 로 두면 페이지를 내렸을 때
+   사본이 화면 위쪽 멀리로 밀려나고, 그 상태에서는 복사가 실패한다. */
 .copy-source {
-  position: absolute;
+  position: fixed;
   left: -10000px;
   top: 0;
   width: 1100px;

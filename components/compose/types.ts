@@ -35,6 +35,19 @@ export interface TaskDraft {
   baseScore: string;
 }
 
+/**
+ * 정기시험·수행평가로 평가하지 않는 성취기준.
+ * 실제 문서에서는 이 표의 '평가 기준'이 성취기준별 성취수준 원문이라,
+ * 내장 데이터로 그대로 채울 수 있다(AI 불필요).
+ */
+export interface UnassessedItem {
+  code: string;
+  standard: string;
+  levels: Record<LevelKey, string>;
+  methods: string[];
+  otherDetail: string;
+}
+
 export interface ComposeState {
   schoolLevel: SchoolLevel;
   subject: string;
@@ -42,6 +55,7 @@ export interface ComposeState {
   levelScale: AchievementScale | null;
   levels: Record<LevelKey, string>;
   tasks: TaskDraft[];
+  unassessed: UnassessedItem[];
 }
 
 export const EMPTY_LEVELS: Record<LevelKey, string> = { A: '', B: '', C: '', D: '', E: '' };
@@ -53,10 +67,17 @@ export const INITIAL_COMPOSE: ComposeState = {
   levelScale: null,
   levels: { ...EMPTY_LEVELS },
   tasks: [],
+  unassessed: [],
 };
 
 export const EVALUATION_METHODS = [
   '서술·논술', '구술·발표', '토의·토론', '프로젝트',
   '실험·실습', '포트폴리오', '기타',
   '교사 관찰 및 기록', '자기평가', '동료평가',
+];
+
+/** 평가하지 않는 성취기준 표의 평가 방법. 실제 문서는 이 7개만 쓰고 '기타'에 괄호를 둔다. */
+export const UNASSESSED_METHODS = [
+  '서술·논술', '구술·발표', '토의·토론', '프로젝트',
+  '실험·실습', '포트폴리오', '기타',
 ];

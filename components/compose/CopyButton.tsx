@@ -8,24 +8,50 @@ import { Copy, Check, X } from 'lucide-react';
  * 복사해 주어 한글에서 표 모양이 그대로 살아난다. 이 페이지의 결과물이
  * 곧 한글 붙여넣기이므로, 검증된 이 경로를 유지한다.
  */
-export const copyNodeToClipboard = (node: HTMLElement | null): boolean => {
+export const copyNodeToClipboard = async (node: HTMLElement | null): Promise<boolean> => {
   if (!node) return false;
+
+  // 1순위: 선택 + execCommand. 브라우저가 계산된 표 서식을 text/html 로 함께 실어 주어
+  // 한글에서 표 모양이 그대로 살아난다.
   const selection = window.getSelection();
-  if (!selection) return false;
-
-  const range = document.createRange();
-  range.selectNodeContents(node);
-  selection.removeAllRanges();
-  selection.addRange(range);
-
-  let ok = false;
-  try {
-    ok = document.execCommand('copy');
-  } catch {
-    ok = false;
+  if (selection) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    selection.removeAllRanges();
+    if (ok) return true;
   }
-  selection.removeAllRanges();
-  return ok;
+
+  // 2순위: 최신 클립보드 API. 표 서식을 직접 실어 보낸다.
+  try {
+    if (navigator.clipboard && typeof ClipboardItem !== 'undefined') {
+      const html = `<meta charset="utf-8">${node.innerHTML}`;
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([node.innerText], { type: 'text/plain' }),
+        }),
+      ]);
+      return true;
+    }
+  } catch {
+    /* 아래 최후 수단으로 */
+  }
+
+  // 최후: 서식 없이 글자만이라도 넘긴다.
+  try {
+    await navigator.clipboard.writeText(node.innerText);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 export const copyTextToClipboard = async (text: string): Promise<boolean> => {
@@ -60,7 +86,7 @@ const CopyButton: React.FC<Props> = ({ targetRef, text, label = '한글로 복�
   const handle = async () => {
     const ok = text !== undefined
       ? await copyTextToClipboard(text)
-      : copyNodeToClipboard(targetRef?.current ?? null);
+      : await copyNodeToClipboard(targetRef?.current ?? null);
     flash(ok ? 'ok' : 'fail');
   };
 
