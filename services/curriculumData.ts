@@ -18,8 +18,13 @@ export interface CurriculumSubject {
   name: string;
   group: string;
   category: string;
+  /** 승인 과목에만 있는 출처 표기 */
+  source?: string;
   standards: CurriculumStandard[];
 }
+
+/** 학교자율시간 편성을 위한 시도교육감 승인 과목 여부 */
+export const isApproved = (s: CurriculumSubject) => s.category === 'approved';
 
 export interface CurriculumData {
   curriculum: string;
@@ -44,7 +49,25 @@ export const loadCurriculum = async (level: SchoolLevel): Promise<CurriculumData
     ? await import('../data/curriculum-2022-middle.json')
     : await import('../data/curriculum-2022-high.json');
 
-  const data = ((mod as any).default ?? mod) as CurriculumData;
+  let data = ((mod as any).default ?? mod) as CurriculumData;
+
+  // 학교자율시간 승인 과목은 고시 교육과정에 없어 별도 파일로 관리한다.
+  // (curriculum-2022-middle.json 은 빌드 스크립트가 통째로 다시 만들기 때문)
+  if (level === 'middle') {
+    try {
+      const extra = await import('../data/curriculum-2022-approved.json');
+      const approved = (((extra as any).default ?? extra) as CurriculumData).subjects || [];
+      if (approved.length > 0) {
+        data = {
+          ...data,
+          subjects: [...data.subjects, ...approved].sort((a, b) => a.name.localeCompare(b.name, 'ko')),
+        };
+      }
+    } catch (e) {
+      console.warn('승인 과목 데이터를 불러오지 못했습니다', e);
+    }
+  }
+
   cache.set(level, data);
   return data;
 };

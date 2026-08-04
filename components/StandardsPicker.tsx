@@ -8,6 +8,7 @@ import {
   SCHOOL_LEVEL_LABEL,
   extractStandardCode,
   formatStandard,
+  isApproved,
   loadCurriculum,
 } from '../services/curriculumData';
 import { createId } from '../services/geminiService';
@@ -208,7 +209,7 @@ const StandardsPicker: React.FC<Props> = ({ data, onChange }) => {
               <option value="">— 과목을 선택하세요 —</option>
               {curriculum?.subjects.map(s => (
                 <option key={s.name} value={s.name}>
-                  {s.name} ({s.standards.length})
+                  {isApproved(s) ? `${s.name} — 학교자율시간 승인 과목` : s.name} ({s.standards.length})
                 </option>
               ))}
             </select>
@@ -345,6 +346,16 @@ const StandardsPicker: React.FC<Props> = ({ data, onChange }) => {
               교육과정이 아니라 <strong>교과서별</strong>로 다르므로, 교수학습 계획 탭에서 직접 수정하세요.
             </span>
           </div>
+          {subject && isApproved(subject) && (
+            <div className="bg-violet-50 border-l-4 border-violet-400 p-3 text-xs text-violet-900 flex gap-2">
+              <Info size={14} className="shrink-0 mt-0.5" />
+              <span>
+                <strong>학교자율시간 승인 과목</strong>입니다. 고시 교육과정 과목이 아니므로
+                편성·운영과 평가 방식은 소속 교육청 지침을 따르세요.
+                {subject.source && <><br />출처: {subject.source}</>}
+              </span>
+            </div>
+          )}
           {curriculum && (
             <p className="text-[11px] text-gray-400 leading-relaxed">
               출처: {curriculum.source} 데이터 가공: {curriculum.generatedFrom}

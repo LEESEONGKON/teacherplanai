@@ -40,6 +40,15 @@ CODE_FIXES = {
     ('국어', '[6국05-07]'): '[9국05-07]',
 }
 
+# 서로 다른 성취기준에 같은 코드가 붙은 경우. (과목, 코드, 문서에서 몇 번째 등장인지)
+# 로 지목해 고친다. 등재하지 않으면 아래 중복 검사에서 걸려 저장되지 않는다.
+DUPLICATE_FIXES = {
+    # 'I. 인공지능과 피지컬 컴퓨팅' 영역의 두 번째 성취기준이 [9데인03-02]로
+    # 잘못 적혀 있다. 영역 번호 체계(I=01)와 앞뒤 코드(01-01, 01-03)로 보아 01-02다.
+    # 실제 [9데인03-02]는 'Ⅲ. 인공지능과 문제 해결' 영역에 따로 있다.
+    ('데이터 분석과 인공지능', '[9데인03-02]', 0): '[9데인01-02]',
+}
+
 # 성취수준 문서의 성취기준 문구가 고시 원문과 크게 다른 사례.
 # 추출 오류가 아니라 문서 자체가 다르게 적고 있음을 원문에서 확인한 항목만 등재한다.
 # (등재해도 성취수준 진술은 문서 그대로 저장된다)
@@ -197,8 +206,11 @@ def extract(pdf_path: Path, subject: str, official_codes):
     """{코드: {'standard': 원문, 'levels': {A..E: 진술}}} 를 문서 순서대로 반환."""
     result = {}
     order = []
+    conflicts = []      # 같은 코드에 다른 성취기준이 붙은 경우
+    seen_counts = {}    # 코드별 등장 횟수 (DUPLICATE_FIXES 지목용)
     current = None
     last_level = None
+    current_domain = ''
     in_section = False
 
     with pdfplumber.open(pdf_path) as pdf:
@@ -210,14 +222,30 @@ def extract(pdf_path: Path, subject: str, official_codes):
             # 예시로 든 페이지가 있어, 이 과목의 실제 성취기준 코드가 있는 페이지에서만
             # 구간을 연다.
             if not in_section:
-                page_codes = {CODE_FIXES.get((subject, re.sub(r'\s+', '', c)), re.sub(r'\s+', '', c))
-                              for c in CODE_RE.findall(text)}
-                # 예시 페이지는 성취기준을 보통 하나만 인용하므로, 실제 자료 페이지의
-                # 기준으로 '이 과목의 성취기준이 둘 이상'을 요구한다.
-                if '성취기준별 성취수준' in text and len(page_codes & official_codes) >= 2:
-                    in_section = True
+                if official_codes is None:
+                    # 승인 과목 문서는 설명 장 없이 성취수준 표만 담고 있어,
+                    # 대조할 코드 목록도 없다. 표가 있는 페이지면 바로 연다.
+                    if '성취기준별 성취수준' in text and CODE_RE.search(text):
+                        in_section = True
+                    else:
+                        continue
                 else:
-                    continue
+                    page_codes = {CODE_FIXES.get((subject, re.sub(r'\s+', '', c)), re.sub(r'\s+', '', c))
+                                  for c in CODE_RE.findall(text)}
+                    # 예시 페이지는 성취기준을 보통 하나만 인용하므로, 실제 자료 페이지의
+                    # 기준으로 '이 과목의 성취기준이 둘 이상'을 요구한다.
+                    if '성취기준별 성취수준' in text and len(page_codes & official_codes) >= 2:
+                        in_section = True
+                    else:
+                        continue
+
+            # 영역 제목(로마숫자)을 기억해 둔다. 승인 과목은 교육과정 데이터가 없어
+            # 영역명을 문서에서 직접 얻어야 한다.
+            for line in text.split('\n'):
+                mh = re.match(r'^\s*([IVXⅠⅡⅢⅣⅤⅥ]+)\s*[.．]\s*(\S.*)$', line.strip())
+                if mh and len(mh.group(2)) <= 40:
+                    current_domain = normalize(f'{mh.group(1)}. {mh.group(2)}')
+                    break
             words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
 
             # '2. 영역별 성취수준' 이 시작되면 종료한다. 다만 마지막 성취기준이
@@ -292,12 +320,23 @@ def extract(pdf_path: Path, subject: str, official_codes):
                     m = CODE_RE.search(std_cell)
                     if m:
                         # 줄바꿈/자간 때문에 코드 안에 공백이 끼어들 수 있어 제거한다.
-                        code = re.sub(r'\s+', '', m.group(0))
-                        code = CODE_FIXES.get((subject, code), code)
+                        raw = re.sub(r'\s+', '', m.group(0))
+                        occurrence = seen_counts.get(raw, 0)
+                        seen_counts[raw] = occurrence + 1
+                        code = (DUPLICATE_FIXES.get((subject, raw, occurrence))
+                                or CODE_FIXES.get((subject, raw), raw))
                         current = code
                         if code not in result:
-                            result[code] = {'standard': std_cell, 'levels': {}}
+                            result[code] = {'standard': std_cell, 'levels': {}, 'domain': current_domain}
                             order.append(code)
+                        else:
+                            # 같은 코드가 다시 나왔다. 이어지는 부분이면 성취기준 문구가
+                            # 같지만, 다른 성취기준에 같은 코드가 붙은 문서 오류일 수도 있다.
+                            # 후자를 놓치면 두 성취기준의 진술이 한 칸에 합쳐져 버린다.
+                            strip = lambda s: normalize(re.sub(r'^\[+[^\]]+\]\s*', '', s)).replace(' ', '')
+                            a, b = strip(result[code]['standard']), strip(std_cell)
+                            if a and b and difflib.SequenceMatcher(None, a, b).ratio() < 0.9:
+                                conflicts.append((code, result[code]['standard'], std_cell))
                     elif current and std_cell:
                         # 성취기준 셀이 페이지 경계에서 잘린 경우의 뒷부분.
                         result[current]['standard'] = normalize(
@@ -326,7 +365,7 @@ def extract(pdf_path: Path, subject: str, official_codes):
             if last_page:
                 break
 
-    return result, order
+    return result, order, conflicts
 
 
 def load_official(subject: str, level: str):
@@ -353,7 +392,7 @@ def code_to_subject(level: str):
     return out
 
 
-def validate_and_store(subject, extracted, order, official, bundle):
+def validate_and_store(subject, extracted, order, official, bundle, conflicts=()):
     """한 과목의 추출 결과를 검증하고, 통과한 경우에만 번들에 담는다."""
     print(f'\n=== {subject} ===  추출 {len(order)}개 / 공식 {len(official)}개')
 
@@ -406,6 +445,7 @@ def validate_and_store(subject, extracted, order, official, bundle):
     print(f'  수준 누락                : {len(missing_levels)}')
     print(f'  데이터셋에 없는 코드      : {len(unknown)}')
     print(f'  추출되지 않은 성취기준    : {len(not_found)}')
+    print(f'  코드 중복(다른 성취기준)  : {len(conflicts)}')
     print(f'  진술 잘림                : {len(truncated)}')
     if known_gap:
         print(f'  문서 미수록(확인됨)       : {len(known_gap)}  {known_gap}')
@@ -424,7 +464,12 @@ def validate_and_store(subject, extracted, order, official, bundle):
     for code, lv, txt in truncated[:3]:
         print(f'    [{code}] {lv} 진술이 중간에서 끊김: …{txt[-42:]}')
 
-    if mismatched or missing_levels or unknown or not_found or truncated or not scale:
+    for code, first, second in conflicts[:3]:
+        print(f'    [{code}] 같은 코드에 다른 성취기준이 붙어 있습니다')
+        print(f'        1) {first[:78]}')
+        print(f'        2) {second[:78]}')
+
+    if mismatched or missing_levels or unknown or not_found or truncated or conflicts or not scale:
         if not scale:
             print(f'    한 과목 안에 수준 구성이 섞여 있습니다: {sorted(shapes)}')
         print('  => 검증 실패. 이 과목은 저장하지 않습니다.')
@@ -438,6 +483,83 @@ def validate_and_store(subject, extracted, order, official, bundle):
     return True
 
 
+def store_standalone(subject, extracted, order, conflicts, bundle, source_note):
+    """고시 과목이 아닌 승인 과목: 대조할 기준값이 없으므로 문서 내부 일관성만으로 검증한다.
+
+    성취기준도 이 문서에서 처음 읽어오기 때문에, 잘못 읽어도 비교할 대상이 없다.
+    그래서 아래 검사를 모두 통과할 때만 저장한다.
+    """
+    print(f'\n=== {subject} (승인 과목) ===  추출 {len(order)}개')
+
+    truncated, bad_standard = [], []
+    for code in order:
+        rec = extracted[code]
+        for lv, txt in sorted(rec['levels'].items()):
+            if not re.search(r'(다|음|함|임)\s*\.?$', txt.strip()):
+                truncated.append((code, lv, txt))
+        body = normalize(re.sub(r'^\[+[^\]]+\]\s*', '', rec['standard']))
+        if len(body) < 10 or not re.search(r'(다|음|함|임)\s*\.?$', body):
+            bad_standard.append((code, body))
+
+    shapes = {''.join(sorted(extracted[c]['levels'])) for c in order}
+    scale = {'ABCDE': '5', 'ABC': '3'}.get(next(iter(shapes))) if len(shapes) == 1 else None
+
+    print(f'  성취수준 단계             : {scale + "단계" if scale else f"판별 불가 {sorted(shapes)}"}')
+    print(f'  진술 잘림                : {len(truncated)}')
+    print(f'  성취기준 문장 이상        : {len(bad_standard)}')
+    print(f'  코드 중복(다른 성취기준)  : {len(conflicts)}')
+
+    for code, lv, txt in truncated[:3]:
+        print(f'    [{code}] {lv} 진술이 중간에서 끊김: …{txt[-42:]}')
+    for code, body in bad_standard[:3]:
+        print(f'    [{code}] 성취기준이 완결 문장이 아님: {body[:60]}')
+    for code, first, second in conflicts[:3]:
+        print(f'    [{code}] 같은 코드에 다른 성취기준이 붙어 있습니다')
+        print(f'        1) {first[:78]}')
+        print(f'        2) {second[:78]}')
+
+    if truncated or bad_standard or conflicts or not scale:
+        print('  => 검증 실패. 이 과목은 저장하지 않습니다.')
+        return False
+
+    bundle['subjects'][subject] = {
+        'scale': scale,
+        'source': source_note,
+        'standards': {code: extracted[code]['levels'] for code in order},
+    }
+    print('  => 검증 통과')
+    return True
+
+
+def write_approved_curriculum(subject, extracted, order, source_note):
+    """승인 과목의 성취기준을 별도 파일에 담는다.
+
+    curriculum-2022-{middle,high}.json 은 build-curriculum-data.mjs 가 통째로
+    다시 만들기 때문에 거기에 섞으면 지워진다.
+    """
+    path = REPO / 'data' / 'curriculum-2022-approved.json'
+    data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {
+        'curriculum': '2022', 'schoolLevel': 'middle',
+        'note': '학교자율시간 편성을 위한 시도교육감 승인 과목. 성취기준은 승인 과목 문서에서 추출.',
+        'subjects': [],
+    }
+    data['subjects'] = [s for s in data['subjects'] if s['name'] != subject]
+    data['subjects'].append({
+        'name': subject,
+        'group': '학교자율시간',
+        'category': 'approved',
+        'source': source_note,
+        'standards': [{
+            'c': code,
+            'd': extracted[code].get('domain', ''),
+            't': normalize(re.sub(r'^\[+[^\]]+\]\s*', '', extracted[code]['standard'])),
+        } for code in order],
+    })
+    data['subjects'].sort(key=lambda s: s['name'])
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+    print(f'  성취기준 {len(order)}개를 data/curriculum-2022-approved.json 에 기록')
+
+
 def main():
     argv = sys.argv[1:]
     level = 'middle'
@@ -447,6 +569,15 @@ def main():
     auto = bool(argv) and argv[0] == '--auto'
     if auto:
         argv.pop(0)
+
+    # 승인 과목: 고시 과목이 아니라 대조 기준이 없다. 성취기준도 함께 추출한다.
+    approved = bool(argv) and argv[0] == '--approved'
+    if approved:
+        argv.pop(0)
+        source_note = ''
+        if len(argv) >= 2 and argv[0] == '--source':
+            argv.pop(0)
+            source_note = argv.pop(0)
 
     if not argv or (not auto and len(argv) % 2 == 1):
         print(__doc__)
@@ -459,7 +590,19 @@ def main():
 
     total_fail = 0
 
-    if auto:
+    if approved:
+        pairs = [(argv[i], Path(argv[i + 1])) for i in range(0, len(argv), 2)]
+        for subject, pdf_path in pairs:
+            if not pdf_path.exists():
+                print(f'!! 파일 없음: {pdf_path}')
+                total_fail += 1
+                continue
+            extracted, order, conflicts = extract(pdf_path, subject, None)
+            if store_standalone(subject, extracted, order, conflicts, bundle, source_note):
+                write_approved_curriculum(subject, extracted, order, source_note)
+            else:
+                total_fail += 1
+    elif auto:
         # 한 PDF에 여러 과목이 실린 문서(생활외국어 8과목 등)를 코드로 갈라 처리한다.
         owner = code_to_subject(level)
         for pdf_path in (Path(a) for a in argv):
@@ -468,7 +611,7 @@ def main():
                 total_fail += 1
                 continue
 
-            extracted, order = extract(pdf_path, None, set(owner))
+            extracted, order, conflicts = extract(pdf_path, None, set(owner))
 
             by_subject = {}
             for code in order:
@@ -483,7 +626,7 @@ def main():
 
             for subj, codes in by_subject.items():
                 official = load_official(subj, level)
-                if not validate_and_store(subj, extracted, codes, official, bundle):
+                if not validate_and_store(subj, extracted, codes, official, bundle, conflicts):
                     total_fail += 1
     else:
         pairs = [(argv[i], Path(argv[i + 1])) for i in range(0, len(argv), 2)]
@@ -505,8 +648,8 @@ def main():
                 total_fail += 1
                 continue
 
-            extracted, order = extract(pdf_path, subject, set(official))
-            if not validate_and_store(subject, extracted, order, official, bundle):
+            extracted, order, conflicts = extract(pdf_path, subject, set(official))
+            if not validate_and_store(subject, extracted, order, official, bundle, conflicts):
                 total_fail += 1
 
     bundle['source'] = (
