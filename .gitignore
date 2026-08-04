@@ -26,3 +26,6 @@ dist-ssr
 # Python
 __pycache__/
 *.pyc
+
+# gh-pages 안내 페이지 배포용 임시 폴더
+.gh-publish/
