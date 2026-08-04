@@ -298,9 +298,9 @@ const PlanCard: React.FC<Props> = ({ curriculum, subject, rows, onRowsChange }) 
                         <textarea
                           value={r.element}
                           onChange={e => update(r.code, 'element', e.target.value)}
-                          rows={3}
-                          className="w-full resize-y border-0 p-0 text-[11px] focus:ring-0 bg-transparent"
-                          placeholder="평가 요소"
+                          rows={5}
+                          className="w-full resize-y border-0 p-0 text-[11px] focus:ring-0 bg-transparent whitespace-pre-wrap"
+                          placeholder="• …하기&#10;• …하기"
                         />
                       </td>
                       <td className={cell}></td>

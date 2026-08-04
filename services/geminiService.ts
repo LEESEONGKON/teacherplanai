@@ -746,7 +746,17 @@ export const generatePlanDetailsForStandards = async (
 
     For each item return:
       - id: echo the id EXACTLY as given.
-      - element (평가요소): a short noun phrase naming what is assessed (e.g. "지수법칙의 이해와 적용"). Not a sentence.
+      - element (평가요소): Break the standard down into 3-4 concrete, separately assessable
+        activities — NOT one summary phrase. Requirements:
+          * Each activity is its own line beginning with "• ".
+          * Each line MUST end with the nominalised verb form "~하기".
+          * Together they should cover the whole standard: what the student
+            understands, what they do with it, and what they produce or express.
+          * Keep each line under about 45 characters.
+        Example for [9역01-01] 역사와 역사 탐구의 의미를 파악하고, 역사 학습의 목적을 다각도로 탐색한다:
+        • 역사의 의미와 역사 탐구의 의미 이해하기
+        • 다양한 역사 학습의 목적이 공존함을 다각도로 탐색하고 제시하기
+        • 자신이 생각하는 역사의 의미와 역사 학습의 목적을 타당한 근거를 들어 표현하기
       - teachingMethod (수업방법): 2-3 concrete methods separated by ", " (e.g. "강의식, 모둠 탐구, 발표").
       - notes (수업-평가 연계 주안점): EXACTLY this format on three lines:
         [도입] ... (within 50 chars)
